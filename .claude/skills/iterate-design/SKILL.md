@@ -1,6 +1,6 @@
 ---
 name: iterate-design
-description: Structured design iteration for non-trivial features on markgate. Forces a design sketch with trade-offs before code, guards against silent opinion-flipping when the user pushes back, and audits plan-vs-implementation proactively at the end. Use when the user asks "どう思う？" / "やるべき？" / "どう？", proposes a new flag/env/config field, or raises a feature with multiple valid shapes.
+description: Structured design iteration for non-trivial features on markgate. Forces a design sketch with trade-offs before code, guards against silent opinion-flipping when the user pushes back, and audits plan-vs-implementation proactively at the end. Use when the user asks for an opinion ("what do you think?", "should we?", "recommended?"), proposes a new flag / env / config field, or raises a feature with multiple valid shapes.
 ---
 
 # iterate-design
@@ -60,6 +60,16 @@ Caution signs that you are drifting:
 - Keep diffs minimal — no drive-by refactors, no hypothetical
   configurability, no "just in case" validation.
 - Run `go test ./... && go vet ./...` before claiming done.
+- **Don't delete something because you're unsure it works — test it.**
+  If a hook, script, or feature might be broken, build a minimal
+  reproduction (temp dir, fake input, run it) and verify. Removing the
+  thing to avoid shipping uncertainty is under-delivering; confirming
+  with a 30-second experiment is what the user is paying for.
+- **Don't churn edits on the same region.** If an edit turns out to
+  be wrong, revert to the previous clean state in one operation, then
+  make the correct edit. A sequence of tiny patches that adds then
+  removes the same phrase is a sign of indecision, not progress — the
+  diff review becomes noisy and the history becomes harder to follow.
 
 ## Phase 4 — audit (proactive)
 

@@ -31,8 +31,9 @@ it is the spec — see "README as a spec" below.
   require editing `.markgate.yml` to preserve existing behavior. Any
   new override follows the chain:
   **CLI flag > env var > `.markgate.yml` > default**.
-  See `resolveMarkerPath` in [internal/cli/helper.go](internal/cli/helper.go)
-  for the canonical implementation.
+  The canonical wire-up point is `newGateCtx` in
+  [internal/cli/helper.go](internal/cli/helper.go); whatever precedence
+  helper an existing override uses is the template for the next one.
 - **Exit codes follow `grep` / `diff`**: 0 match, 1 mismatch, 2 error.
   Errors surface as `&ExitError{Code: 2, Err: err}` — never panic on
   user-facing failures.
@@ -109,6 +110,24 @@ behavior, update the README in the same change. Pay attention to:
 - Hold the line on recommendations. If the user pushes back, restate
   the original reasoning first. Only flip if new information genuinely
   invalidates it — and say so explicitly.
+
+### Subagents and branches
+
+If you spawn an Explore or general-purpose subagent and the task
+needs a specific branch, **pin the branch in the prompt** ("on branch
+`feat/foo`, check …") and — since the subagent can `git checkout` in
+your working tree — `git checkout` back to your original branch after
+it returns. Otherwise subagent findings can come from the wrong
+branch (e.g. "function X doesn't exist" because the agent was on a
+branch where X hasn't landed yet).
+
+### Commit messages with non-ASCII
+
+When a commit message contains Japanese or other non-ASCII text,
+pass it via `git commit -F <file>` rather than a bash heredoc:
+heredoc + `$(...)` substitution can mis-parse embedded
+question-marks or quotes and fail with "unexpected EOF". Writing the
+message to a temp file first sidesteps all shell escaping.
 
 ## Harness (.claude/)
 
