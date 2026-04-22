@@ -70,10 +70,16 @@ it is the spec — see "README as a spec" below.
 ```sh
 go build ./...        # compile check
 go test ./...         # full test suite (CLI tests spawn real git repos)
-go vet ./...          # catches misuse the compiler misses
+go vet ./...          # basic misuse check
+make lint             # golangci-lint with govet shadow + gocritic +
+                      # staticcheck + gosec + etc. Mirrors CI.
 ```
 
-Before reporting a task complete, run `go test ./... && go vet ./...`.
+Before reporting a task complete, run `go test ./... && make lint`.
+Plain `go vet` is **not enough**: CI's golangci-lint enables shadow
+detection, ineffassign, unused-variable, format-string checks, and
+more that `go vet` alone misses. If only `go vet` passed, CI is your
+audit — which is too late.
 
 ## Style
 
@@ -101,15 +107,17 @@ behavior, update the README in the same change. Pay attention to:
 
 ## Working with Claude on this repo
 
-- When the user asks for an opinion or proposes a new flag / env /
-  config field with multiple valid shapes, reach for the
-  [iterate-design](.claude/skills/iterate-design/SKILL.md) skill —
-  sketch options, pick one, get sign-off before coding.
-- When you implement a non-trivial feature, audit plan-vs-actual
-  proactively before reporting done (same skill).
-- Hold the line on recommendations. If the user pushes back, restate
-  the original reasoning first. Only flip if new information genuinely
-  invalidates it — and say so explicitly.
+Two project skills split the workflow by triggering moment:
+
+- **[iterate-design](.claude/skills/iterate-design/SKILL.md)** — fires
+  when the user asks for an opinion or proposes a new flag / env /
+  config field. Sketch options, pick one, hold the line if the user
+  pushes back, get sign-off before coding.
+- **[audit-before-done](.claude/skills/audit-before-done/SKILL.md)** —
+  fires when you're about to say "done" / push / create a PR. Covers
+  implementation discipline, the widened proactive audit, and the
+  "run what CI runs" rule (`make lint`, not just `go vet`). Use this
+  before every `git push` on non-trivial work.
 
 ### Subagents and branches
 
