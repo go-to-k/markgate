@@ -236,8 +236,10 @@ $(git rev-parse --git-dir)/markgate/<key>.json
 ```
 
 Inside `.git/`, so no gitignore entry is needed and worktrees stay
-isolated. The on-disk JSON layout is an implementation detail; don't
-parse it.
+isolated. The on-disk JSON layout is an implementation detail — the
+fields (including `version`, which is an internal schema marker) exist
+only for debugging and may change between releases without notice.
+Don't parse it.
 
 ## Integration snippets
 
