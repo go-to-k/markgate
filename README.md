@@ -407,26 +407,47 @@ git so CI sees it without any cache layer, skip to
 [Pattern B](#b-committed-files-hash) — that's a different shape, not
 a variant of this one.)
 
-> **⚠ Required for `hash: git-tree` + state dir inside the repo:
-> gitignore the state dir.** Not hygiene — *required*. The `git-tree`
-> digest includes untracked-not-ignored files, and the marker itself
-> is an untracked file. Without gitignore:
->
-> 1. `markgate run` computes digest_1 (before the marker exists) and
->    saves the marker with digest_1.
-> 2. The saved marker file now exists as untracked-not-ignored.
-> 3. The next `markgate verify` computes digest_2 — which *includes*
->    the marker file — so digest_2 ≠ digest_1 → mismatch → the check
->    re-runs every time. The feature is defeated on the first verify,
->    before any commit.
->
-> Gitignoring the state dir keeps the marker out of the digest.
-> Placing the state dir outside the repo (absolute path,
-> `$RUNNER_TEMP/...`, etc.) also works — untracked-not-ignored only
-> applies to files under the repo tree.
->
-> `hash: files` sidesteps this: the marker is only in the digest if a
-> glob matches it. Gitignore is optional on `files` — pure hygiene.
+#### Step 1. Add the state dir to `.gitignore`
+
+**This is a required setup step on `hash: git-tree`, not optional
+hygiene.** Do this *before* your first `markgate run`:
+
+```gitignore
+# .gitignore — add the state dir you chose
+/.markgate-cache/
+```
+
+You can skip this only if:
+
+- the state dir is **outside the repo** (e.g. `$RUNNER_TEMP/mg`,
+  `/tmp/mg`, `$HOME/.cache/markgate`), **or**
+- you're on `hash: files` (gitignore then becomes hygiene, not
+  required — see why below).
+
+<details>
+<summary>Why it's required on <code>git-tree</code> (click to expand)</summary>
+
+The `git-tree` digest hashes `HEAD + diff-vs-HEAD ∪
+untracked-not-ignored`. The saved marker file is itself an untracked
+file, so without gitignore:
+
+1. `markgate run` computes **digest_1** (before the marker exists)
+   and saves the marker with digest_1.
+2. The saved marker file now exists as untracked-not-ignored.
+3. The next `markgate verify` computes **digest_2**, which *includes*
+   the marker file. digest_2 ≠ digest_1 → mismatch → the check
+   re-runs every time.
+
+The feature is defeated on the first verify, before any commit.
+Gitignoring the state dir keeps the marker out of the digest.
+
+`hash: files` sidesteps this: the marker is only in the digest if an
+`include` glob matches it, which it normally won't. That's why
+gitignore is optional on `files`.
+
+</details>
+
+#### Step 2. Wire up CI
 
 **Across runs of the same workflow** — `actions/cache`:
 
@@ -444,9 +465,6 @@ jobs:
             markgate-scan-
       - run: markgate run pre-image-push --state-dir .markgate-cache -- trivy fs .
 ```
-
-Make sure `.markgate-cache/` is in `.gitignore` before the first run
-(see the warning above for why it's required on `git-tree`).
 
 **Across jobs within one workflow** — `actions/upload-artifact` →
 `actions/download-artifact`. A setup job runs the expensive check
