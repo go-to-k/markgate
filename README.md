@@ -15,13 +15,9 @@ can skip re-running it.
 $ markgate run -- make check
 linting...
 tests passed in 4.2s
-$ echo $?
-0
 
 # Second run — nothing changed since the last success: instant skip.
 $ markgate run -- make check
-$ echo $?
-0
 
 # After you edit a file — marker is stale, `make check` runs again.
 $ echo '// fix typo' >> src/foo.go
