@@ -3,11 +3,10 @@
 > Stop re-running your checks. Skip the commit hook when nothing has
 > changed since the last time they passed.
 
-`markgate` is a tiny primitive for hook managers (Claude Code hooks,
-husky, lefthook, pre-commit, bare `.git/hooks/*`). It remembers the
-state of your repo the last time your checks (lint / test / build /
-scan / …) passed, so the next hook can skip them when nothing relevant
-has changed.
+`markgate` is a verification-state cache for hook managers (Claude
+Code hooks, husky, lefthook, pre-commit, bare `.git/hooks/*`). It
+records that a check passed at the current repo state so the next hook
+can skip re-running it.
 
 ## 20-second tour
 
@@ -35,20 +34,164 @@ Zero config. No key argument needed. That is the intended daily usage.
 (`make check` is a placeholder — substitute your project's verification
 command.)
 
-## Why
+## Why markgate?
 
-Coding agents (and humans) around commits tend to either:
+Your agent (or you) just ran `make check`. The commit hook runs it
+again. `gh pr create` runs it again. CI runs it again — four passes,
+one change. `markgate` lets the second / third / fourth of those exit
+instantly when the repo state hasn't moved.
 
-- **skip the check pipeline** and commit dirty, or
-- **re-run it seconds after it last passed.**
+Concrete gates you can build (see [Use cases](#use-cases) for full
+configs):
 
-Existing pre-commit tooling (husky / lefthook / pre-commit) is great at
-*running* checks. It has no concept of *remembering* that they just ran
-and nothing relevant has changed since. `markgate` is that memory —
-exit 0 means "verified, skip", exit 1 means "stale, re-run".
+- **Pre-commit: skip duplicate checks** — skip lint / test / build when
+  nothing changed since the last `/check`.
+- **Pre-PR: docs consistency** — re-verify docs only when `docs/**` or
+  `README.md` actually changed. Code-only commits are free.
+- **Pre-image-push: vulnerability scan freshness** — re-run `trivy`
+  only when `Dockerfile` or lockfiles changed.
+- **Pre-push: coverage report freshness** — re-run the test suite only
+  when `src/**` or `tests/**` changed.
 
-`markgate` is not a hook manager itself. It slots into the one you
-already use.
+Existing hook managers (husky / lefthook / pre-commit / Claude Code
+hooks) are great at *running* checks. None of them *remember* that the
+checks just passed and nothing relevant has changed since. `markgate`
+is that memory layer — exit 0 means "verified, skip", exit 1 means
+"stale, re-run". It's not a hook manager itself; it slots into the one
+you already use — one line to adopt, one line to remove.
+
+## Usage
+
+### `markgate run -- <cmd>` (main)
+
+`markgate run -- <cmd>` is the idiomatic form. It collapses the common
+verify → run → set cycle into one invocation:
+
+1. **verify** — if the marker matches, `<cmd>` is not executed; exit 0
+   immediately.
+2. Otherwise **execute `<cmd>`**. stdio is passed through;
+   `SIGINT` / `SIGTERM` are forwarded to the child.
+3. On success, **set** the marker. On failure, the marker is **not**
+   updated and `<cmd>`'s exit code is returned as-is.
+
+```sh
+markgate run -- make check
+```
+
+Most hook setups only need this one command.
+
+### `markgate set` / `markgate verify` (building blocks)
+
+Reach for the two halves directly when `run` doesn't fit:
+
+- **Multi-step check pipelines** — `run -- <cmd>` wraps a single
+  command. If your check is several steps (typecheck, lint, build,
+  tests) spread across a script or skill, run them normally and call
+  `markgate set` once at the end, after all pass.
+- **Check and gate in different places** — e.g. a Claude Code skill
+  runs the check and records the marker, while a PreToolUse hook on
+  `git commit*` only calls `markgate verify` to gate.
+
+```sh
+# Wherever the check runs — record state on success:
+typecheck && lint && build && test && markgate set
+
+# Wherever the gate runs — short-circuit on a fresh marker, else re-run:
+markgate verify || make check
+```
+
+Exit codes follow the `grep` / `diff` convention, so `||` composes
+naturally:
+
+| exit | meaning                                                   |
+| ---- | --------------------------------------------------------- |
+| 0    | verified — state matches the marker, safe to skip         |
+| 1    | not verified — no marker, or state differs                |
+| 2    | error — not in a repo, bad config, bad key, etc.          |
+
+## Drop into your hook
+
+If the hook can wrap your check command, use `markgate run -- <cmd>`
+(husky / lefthook / pre-commit). If the hook only sits *in front of*
+the command (Claude Code PreToolUse, bare `.git/hooks/*`), use
+`markgate verify` (exit 0 = skip, exit 1 = re-run) and pair it with
+`markgate set` in the check command itself.
+
+### Claude Code (PreToolUse hook)
+
+`.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git commit*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "markgate verify"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+In your check skill:
+
+```sh
+make check && markgate set
+```
+
+See [Use cases § Pre-commit](#1-pre-commit-skip-duplicate-checks) for
+the full flow.
+
+### husky
+
+`.husky/pre-commit`:
+
+```sh
+markgate run -- make check
+```
+
+### lefthook
+
+`lefthook.yml`:
+
+```yaml
+pre-commit:
+  commands:
+    check:
+      run: markgate run -- make check
+```
+
+### pre-commit framework
+
+`.pre-commit-hooks.yaml`:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: markgate-check
+        name: markgate check
+        entry: markgate run -- make check
+        language: system
+        pass_filenames: false
+```
+
+### Bare `.git/hooks/pre-commit`
+
+```sh
+#!/bin/sh
+markgate verify || {
+  echo "Run your check command first, then commit." >&2
+  exit 1
+}
+```
 
 ## Install
 
@@ -81,20 +224,6 @@ Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
 
 ## Core concepts
 
-### Exit codes
-
-| exit | meaning                                                   |
-| ---- | --------------------------------------------------------- |
-| 0    | verified — state matches the marker, safe to skip         |
-| 1    | not verified — no marker, or state differs                |
-| 2    | error — not in a repo, bad config, bad key, etc.          |
-
-Follows the `grep` / `diff` convention, so it composes with shell `||`:
-
-```sh
-markgate verify || make check
-```
-
 ### Key (optional)
 
 Every marker is keyed. You only need to think about keys when you run
@@ -109,7 +238,7 @@ markgate set pre-pr        # a second, independent gate
 
 Keys must match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII).
 
-### Hash: `git-tree` vs `files`
+### Hashing strategy: `git-tree` vs `files`
 
 `markgate` ships two hashing strategies:
 
@@ -133,20 +262,6 @@ They serve different purposes:
 Rule of thumb: start with `git-tree` (add `exclude` if needed). Reach
 for `files` only when you specifically want the "ignore commits that
 don't touch these paths" semantics.
-
-## The `run` sugar (recommended)
-
-`markgate run -- <cmd>` is the idiomatic form. It collapses the common
-`verify` + `<cmd>` + `set` cycle into one invocation:
-
-1. **verify** — if the marker matches, `<cmd>` is not executed; exit 0
-   immediately.
-2. Otherwise **execute `<cmd>`**. stdio is passed through;
-   `SIGINT`/`SIGTERM` are forwarded to the child.
-3. On success, **set** the marker. On failure, the marker is **not**
-   updated and `<cmd>`'s exit code is returned as-is.
-
-Most hook setups only need this one command.
 
 ## Use cases
 
@@ -325,81 +440,6 @@ isolated. The on-disk JSON layout is an implementation detail — the
 fields (including `version`, which is an internal schema marker) exist
 only for debugging and may change between releases without notice.
 Don't parse it.
-
-## Integration snippets
-
-### Claude Code (PreToolUse hook)
-
-`.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "if": "Bash(git commit*)",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "markgate verify"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-In your check skill:
-
-```sh
-make check && markgate set
-```
-
-### husky
-
-`.husky/pre-commit`:
-
-```sh
-markgate run -- make check
-```
-
-### lefthook
-
-`lefthook.yml`:
-
-```yaml
-pre-commit:
-  commands:
-    check:
-      run: markgate run -- make check
-```
-
-### pre-commit framework
-
-`.pre-commit-hooks.yaml`:
-
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: markgate-check
-        name: markgate check
-        entry: markgate run -- make check
-        language: system
-        pass_filenames: false
-```
-
-### Bare `.git/hooks/pre-commit`
-
-```sh
-#!/bin/sh
-markgate verify || {
-  echo "Run your check command first, then commit." >&2
-  exit 1
-}
-```
 
 ## FAQ
 
