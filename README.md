@@ -32,6 +32,8 @@ tests passed in 4.1s
 ```
 
 Zero config. No key argument needed. That is the intended daily usage.
+(`make check` is a placeholder — substitute your project's verification
+command.)
 
 ## Why
 
