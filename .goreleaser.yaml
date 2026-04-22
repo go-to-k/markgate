@@ -1,0 +1,63 @@
+version: 2
+
+project_name: markgate
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: markgate
+    main: ./cmd/markgate
+    binary: markgate
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+brews:
+  - name: markgate
+    repository:
+      owner: go-to-k
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/go-to-k/markgate
+    description: State-cached gate primitive for hook managers
+    license: MIT
+    directory: Formula
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    install: |
+      bin.install "markgate"
+    test: |
+      system "#{bin}/markgate", "version"

@@ -1,0 +1,22 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprintln
+        - fmt.Fprintf
+
+formatters:
+  enable:
+    - gofmt

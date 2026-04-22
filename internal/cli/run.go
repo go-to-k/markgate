@@ -1,0 +1,125 @@
+package cli
+
+import (
+	"errors"
+	"os"
+	"os/exec"
+	"os/signal"
+	"syscall"
+
+	"github.com/spf13/cobra"
+
+	"github.com/go-to-k/markgate/internal/state"
+)
+
+func newRunCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "run <key> -- <cmd> [args...]",
+		Short: "Sugar for verify + set: verify; on mismatch run <cmd>; on success set the marker",
+		Long: "run combines `markgate verify` and `markgate set` into a single invocation,\n" +
+			"wedging <cmd> in between. It is sugar for:\n\n" +
+			"  markgate verify <key> || ( <cmd> && markgate set <key> )\n\n" +
+			"Arguments after `--` are executed verbatim (no shell interpretation).",
+		DisableFlagParsing: false,
+		Args:               cobra.MinimumNArgs(2),
+		RunE:               runE,
+	}
+	return cmd
+}
+
+func runE(cmd *cobra.Command, args []string) error {
+	dash := cmd.ArgsLenAtDash()
+	if dash < 0 {
+		return &ExitError{Code: 2, Err: errors.New("run: '--' separator before the command is required")}
+	}
+	if dash != 1 {
+		return &ExitError{Code: 2, Err: errors.New("run: exactly one <key> must precede '--'")}
+	}
+	keyArg := args[0]
+	cmdArgs := args[dash:]
+	if len(cmdArgs) == 0 {
+		return &ExitError{Code: 2, Err: errors.New("run: a command after '--' is required")}
+	}
+
+	c, err := newGateCtx(keyArg)
+	if err != nil {
+		return err
+	}
+
+	// Verify first; on match, skip execution entirely.
+	m, loadErr := state.Load(c.markerPath)
+	switch {
+	case loadErr == nil:
+		digest, err := c.hasher.Hash(c.repo)
+		if err != nil {
+			return &ExitError{Code: 2, Err: err}
+		}
+		if m.HashType == c.hasher.Type() && m.Digest == digest {
+			return nil
+		}
+	case errors.Is(loadErr, state.ErrNotFound):
+		// fall through to execution
+	default:
+		return &ExitError{Code: 2, Err: loadErr}
+	}
+
+	if code, err := execChild(cmdArgs); err != nil {
+		return &ExitError{Code: 2, Err: err}
+	} else if code != 0 {
+		return &ExitError{Code: code}
+	}
+
+	// Success: record a fresh marker.
+	newM, err := newMarker(c)
+	if err != nil {
+		return &ExitError{Code: 2, Err: err}
+	}
+	if err := state.Save(c.markerPath, newM); err != nil {
+		return &ExitError{Code: 2, Err: err}
+	}
+	return nil
+}
+
+// execChild runs argv with stdio pass-through and forwards SIGINT/SIGTERM
+// to the child. It returns the child's exit code, or a non-nil error if
+// the process could not be started.
+func execChild(argv []string) (int, error) {
+	child := exec.Command(argv[0], argv[1:]...)
+	child.Stdin = os.Stdin
+	child.Stdout = os.Stdout
+	child.Stderr = os.Stderr
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	if err := child.Start(); err != nil {
+		return 0, err
+	}
+
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case sig := <-sigCh:
+				if child.Process != nil {
+					_ = child.Process.Signal(sig)
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	waitErr := child.Wait()
+	close(done)
+
+	if waitErr == nil {
+		return 0, nil
+	}
+	var ee *exec.ExitError
+	if errors.As(waitErr, &ee) {
+		return ee.ExitCode(), nil
+	}
+	return 0, waitErr
+}
