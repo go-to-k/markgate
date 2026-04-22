@@ -356,6 +356,206 @@ func TestInit_ExistingBlocks(t *testing.T) {
 	}
 }
 
+func TestStateDir_FlagAbsolutePath(t *testing.T) {
+	initRepo(t)
+	stateDir := t.TempDir()
+
+	if code, _ := runCmd(t, "set", "check", "--state-dir", stateDir); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	// Marker must be at <stateDir>/<key>.json, NOT <stateDir>/markgate/<key>.json.
+	if _, err := os.Stat(filepath.Join(stateDir, "check.json")); err != nil {
+		t.Errorf("marker not at <dir>/<key>.json: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "markgate", "check.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("unexpected markgate/ subdir under --state-dir")
+	}
+
+	if code, _ := runCmd(t, "verify", "check", "--state-dir", stateDir); code != 0 {
+		t.Errorf("verify after set: %d, want 0", code)
+	}
+	if code, _ := runCmd(t, "clear", "check", "--state-dir", stateDir); code != 0 {
+		t.Errorf("clear: %d, want 0", code)
+	}
+	if code, _ := runCmd(t, "verify", "check", "--state-dir", stateDir); code != 1 {
+		t.Errorf("verify after clear: %d, want 1", code)
+	}
+}
+
+func TestStateDir_FlagRelativeResolvesToRepoRoot(t *testing.T) {
+	dir := initRepo(t)
+	// Relative path must resolve from repo top-level, not cwd.
+	sub := filepath.Join(dir, "nested")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+
+	if code, _ := runCmd(t, "set", "check", "--state-dir", ".cache/markgate"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	want := filepath.Join(dir, ".cache", "markgate", "check.json")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("marker not at repo-root-relative path %s: %v", want, err)
+	}
+}
+
+func TestStateDir_EnvVar(t *testing.T) {
+	initRepo(t)
+	stateDir := t.TempDir()
+	t.Setenv("MARKGATE_STATE_DIR", stateDir)
+
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "check.json")); err != nil {
+		t.Errorf("env-var marker not found: %v", err)
+	}
+	if code, _ := runCmd(t, "verify", "check"); code != 0 {
+		t.Errorf("verify via env: %d, want 0", code)
+	}
+}
+
+func TestStateDir_FlagBeatsEnv(t *testing.T) {
+	initRepo(t)
+	envDir := t.TempDir()
+	flagDir := t.TempDir()
+	t.Setenv("MARKGATE_STATE_DIR", envDir)
+
+	if code, _ := runCmd(t, "set", "check", "--state-dir", flagDir); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	// Flag wins: file is in flagDir, not envDir.
+	if _, err := os.Stat(filepath.Join(flagDir, "check.json")); err != nil {
+		t.Errorf("flag path not written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(envDir, "check.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("env path should not have been written when flag is set")
+	}
+}
+
+func TestStateDir_DoesNotTouchDefaultLocation(t *testing.T) {
+	dir := initRepo(t)
+	stateDir := t.TempDir()
+
+	if code, _ := runCmd(t, "set", "check", "--state-dir", stateDir); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	// Default .git/markgate/<key>.json must not exist: override is exclusive.
+	defaultPath := filepath.Join(dir, ".git", "markgate", "check.json")
+	if _, err := os.Stat(defaultPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("default marker path should not exist when --state-dir is used")
+	}
+}
+
+func TestStateDir_FromConfigAbsolutePath(t *testing.T) {
+	dir := initRepo(t)
+	absDir := t.TempDir()
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  check:\n    hash: git-tree\n    state_dir: "+absDir+"\n")
+
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(absDir, "check.json")); err != nil {
+		t.Errorf("marker not at config-specified absolute path: %v", err)
+	}
+	if code, _ := runCmd(t, "verify", "check"); code != 0 {
+		t.Errorf("verify: %d, want 0", code)
+	}
+}
+
+func TestStateDir_ConfigWithFilesHash(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.ts", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  coverage:\n    hash: files\n    include:\n      - \"src/**\"\n    state_dir: .mg\n")
+
+	if code, _ := runCmd(t, "set", "coverage"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	// Marker must be at config state_dir (files hash + state_dir combine correctly).
+	if _, err := os.Stat(filepath.Join(dir, ".mg", "coverage.json")); err != nil {
+		t.Errorf("marker not at config state_dir for files hash: %v", err)
+	}
+	// Out-of-scope change does not invalidate (files hash).
+	writeRepoFile(t, dir, "docs/x.md", "x")
+	if code, _ := runCmd(t, "verify", "coverage"); code != 0 {
+		t.Errorf("verify after out-of-scope edit: %d, want 0", code)
+	}
+	// In-scope change does invalidate (files hash).
+	writeRepoFile(t, dir, "src/a.ts", "edited")
+	if code, _ := runCmd(t, "verify", "coverage"); code != 1 {
+		t.Errorf("verify after in-scope edit: %d, want 1", code)
+	}
+}
+
+func TestStateDir_FromConfig(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  check:\n    hash: git-tree\n    state_dir: .mg-cache\n")
+
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	want := filepath.Join(dir, ".mg-cache", "check.json")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("marker not at config-specified path %s: %v", want, err)
+	}
+}
+
+func TestStateDir_EnvBeatsConfig(t *testing.T) {
+	dir := initRepo(t)
+	envDir := t.TempDir()
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  check:\n    state_dir: .mg-cache\n")
+	t.Setenv("MARKGATE_STATE_DIR", envDir)
+
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(envDir, "check.json")); err != nil {
+		t.Errorf("env path should win over config: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".mg-cache", "check.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("config path should have been shadowed by env")
+	}
+}
+
+func TestStateDir_FlagBeatsConfig(t *testing.T) {
+	dir := initRepo(t)
+	flagDir := t.TempDir()
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  check:\n    state_dir: .mg-cache\n")
+
+	if code, _ := runCmd(t, "set", "check", "--state-dir", flagDir); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(flagDir, "check.json")); err != nil {
+		t.Errorf("flag path should win over config: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".mg-cache", "check.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("config path should have been shadowed by flag")
+	}
+}
+
+func TestStateDir_RunCmd(t *testing.T) {
+	dir := initRepo(t)
+	stateDir := t.TempDir()
+	writeRepoFile(t, dir, "seed.txt", "edited")
+
+	if code, _ := runCmd(t, "run", "check", "--state-dir", stateDir, "--", "true"); code != 0 {
+		t.Errorf("run success: %d, want 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "check.json")); err != nil {
+		t.Errorf("run did not persist marker to --state-dir: %v", err)
+	}
+	// Second run should skip (match on same state).
+	if code, _ := runCmd(t, "run", "check", "--state-dir", stateDir, "--", "false"); code != 0 {
+		t.Errorf("run skip: %d, want 0 (should not execute child)", code)
+	}
+}
+
 func TestVersion_PrintsInjected(t *testing.T) {
 	root := newRootCmd("v1.2.3")
 	var stdout bytes.Buffer

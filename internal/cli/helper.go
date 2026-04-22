@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -11,6 +13,11 @@ import (
 	"github.com/go-to-k/markgate/internal/key"
 	"github.com/go-to-k/markgate/internal/state"
 )
+
+// EnvStateDir overrides the directory that stores marker files. CLI
+// flag --state-dir takes precedence over this env var, and both override
+// the default (<git-dir>/markgate).
+const EnvStateDir = "MARKGATE_STATE_DIR"
 
 // DefaultKey is the key used when the user omits the positional argument.
 const DefaultKey = "default"
@@ -24,15 +31,17 @@ func resolveKey(args []string) string {
 }
 
 // gateFlagValues holds CLI flags that can override the config-derived
-// gate on a per-invocation basis.
+// gate (hash/include/exclude) plus the marker storage directory, on a
+// per-invocation basis.
 type gateFlagValues struct {
-	hash    string
-	include []string
-	exclude []string
+	hash     string
+	include  []string
+	exclude  []string
+	stateDir string
 }
 
-// addGateFlags registers --hash / --include / --exclude on cmd and
-// returns a pointer whose fields are populated when RunE fires.
+// addGateFlags registers --hash / --include / --exclude / --state-dir on
+// cmd and returns a pointer whose fields are populated when RunE fires.
 func addGateFlags(cmd *cobra.Command) *gateFlagValues {
 	v := &gateFlagValues{}
 	cmd.Flags().StringVar(&v.hash, "hash", "",
@@ -41,6 +50,8 @@ func addGateFlags(cmd *cobra.Command) *gateFlagValues {
 		"glob to include (repeatable); overrides config include list")
 	cmd.Flags().StringArrayVar(&v.exclude, "exclude", nil,
 		"glob to exclude (repeatable); overrides config exclude list")
+	cmd.Flags().StringVar(&v.stateDir, "state-dir", "",
+		"directory to store marker files; overrides "+EnvStateDir+" (default: <git-dir>/markgate)")
 	return v
 }
 
@@ -105,8 +116,34 @@ func newGateCtx(k string, overrides *gateFlagValues) (*gateCtx, error) {
 		gitDir:     gitDir,
 		gate:       gate,
 		hasher:     h,
-		markerPath: state.Path(gitDir, k),
+		markerPath: resolveMarkerPath(overrides, gate, top, gitDir, k),
 	}, nil
+}
+
+// resolveMarkerPath picks the marker file location based on precedence:
+// --state-dir flag > MARKGATE_STATE_DIR env > gate.StateDir (from
+// .markgate.yml) > default (<gitDir>/markgate). When an override is
+// used, the "markgate" subdirectory is not injected: the user-specified
+// directory is treated as the final storage location. Relative override
+// paths resolve against the repo top-level so the location is stable
+// across cwds (e.g. when invoked from a git hook).
+func resolveMarkerPath(overrides *gateFlagValues, gate config.Gate, topLevel, gitDir, k string) string {
+	dir := ""
+	switch {
+	case overrides != nil && overrides.stateDir != "":
+		dir = overrides.stateDir
+	case os.Getenv(EnvStateDir) != "":
+		dir = os.Getenv(EnvStateDir)
+	case gate.StateDir != "":
+		dir = gate.StateDir
+	}
+	if dir == "" {
+		return state.Path(gitDir, k)
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(topLevel, dir)
+	}
+	return state.PathIn(dir, k)
 }
 
 // validateGate enforces the invariants that config.validate also enforces,

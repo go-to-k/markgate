@@ -35,7 +35,8 @@ command.)
 Your agent (or you) just ran `make check`. The commit hook runs it
 again. `gh pr create` runs it again. CI runs it again — four passes,
 one change. `markgate` lets the second / third / fourth of those exit
-instantly when the repo state hasn't moved.
+instantly when the repo state hasn't moved. (The CI pass needs a bit
+of extra wiring — see [Sharing markers](#sharing-markers-across-machines-ci--teammates).)
 
 Concrete gates you can build (see [Use cases](#use-cases) for full
 configs):
@@ -355,6 +356,166 @@ go test -cover && markgate set pre-push
 markgate verify pre-push || exit 1
 ```
 
+## Sharing markers across machines (CI / teammates)
+
+By default, markers live under `.git/markgate/` — strictly local. If
+that's all you need, skip this section; the [use cases above](#use-cases)
+all work with the default.
+
+Read on if you want a check to **skip in CI (or on a teammate's
+machine) based on a run that already happened elsewhere**. Typical
+wins: coverage, vulnerability scan, e2e, image build — expensive and
+deterministic, redundant to re-run. Don't use it for security
+boundaries (supply-chain audit, permission scan); those should stay
+fresh in CI.
+
+### Specifying a non-default location
+
+Three sources, in precedence order (flag beats env beats config):
+
+```text
+--state-dir <dir>           # per-invocation flag
+MARKGATE_STATE_DIR=<dir>    # environment variable
+state_dir: <dir>            # in .markgate.yml, per gate
+```
+
+The marker is written at `<dir>/<key>.json` (no extra `markgate/`
+subdirectory). Relative paths resolve against the repo top-level, so
+the location is stable regardless of cwd — identical on every machine
+that checks out the repo.
+
+### Two patterns at a glance
+
+Both use `--state-dir` / `state_dir`; the difference is whether the
+marker is **committed** to the repo.
+
+| aspect | **A. Not committed** (CI cache / artifact) | **B. Committed** |
+|---|---|---|
+| Marker in the repo? | No (typically gitignored, or outside the repo) | Yes, tracked in git |
+| Works with hash type | `git-tree` or `files` | **`files` only** — committing with `git-tree` breaks: the commit changes HEAD → digest is instantly stale |
+| Local → CI sharing | Needs CI cache / artifact / shared volume | Just `git push` |
+| Tamper surface | Whoever can write to the cache | Whoever has commit access |
+| Extra infra | CI cache provider (e.g. `actions/cache`, `actions/upload-artifact`) | None — git is enough |
+| Best for | CI-internal reuse across runs; teams already on remote cache infra | Zero-infra local→CI sharing for `files`-hash gates (coverage, scans) |
+
+### A. Not committed (CI cache / artifact)
+
+Store the marker somewhere CI can pick it up, but keep it out of git.
+`.markgate-cache/` at the repo root is a conventional choice; any
+path outside `.git/` works. (If you'd rather commit the marker into
+git so CI sees it without any cache layer, skip to
+[Pattern B](#b-committed-files-hash) — that's a different shape, not
+a variant of this one.)
+
+**Across runs of the same workflow** — `actions/cache`:
+
+```yaml
+# .github/workflows/scan.yml
+jobs:
+  scan:
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .markgate-cache
+          key: markgate-scan-${{ github.sha }}
+          restore-keys: |
+            markgate-scan-
+      - run: markgate run pre-image-push --state-dir .markgate-cache -- trivy fs .
+```
+
+When the dir lives inside the repo, gitignore it **if you use
+`hash: git-tree`**. Why: an accidental `git add .` + commit pulls
+the marker into the commit, which changes HEAD, which stales the
+digest the marker just recorded — so the very next `verify` fails
+and the check runs again, defeating the whole point. Gitignoring the
+dir makes that accident impossible.
+
+With `hash: files` the marker survives being committed (it's outside
+the digest scope), so gitignoring is optional on that hash — treat
+it as hygiene (keeps `git status` clean, signals that these aren't
+tracked artifacts).
+
+**Across jobs within one workflow** — `actions/upload-artifact` →
+`actions/download-artifact`. A setup job runs the expensive check
+once; matrix jobs on the same commit download the marker and skip:
+
+```yaml
+jobs:
+  verify:
+    steps:
+      - uses: actions/checkout@v4
+      - run: markgate run expensive --state-dir .markgate-cache -- make expensive-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: markgate-state
+          path: .markgate-cache
+
+  fan-out:
+    needs: verify
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: markgate-state
+          path: .markgate-cache
+      - run: markgate verify expensive --state-dir .markgate-cache || make expensive-check
+```
+
+### B. Committed (files hash)
+
+Keep the state directory **tracked in git** and commit the marker with
+the code. Works only with `hash: files`: `git-tree` would change HEAD
+on the commit and invalidate the marker it just wrote.
+
+Typical fit: coverage reports, image vulnerability scans — expensive,
+deterministic, and already re-running them on every push is waste
+when nothing in scope changed.
+
+Coverage example (extending the pre-push gate from
+[Use case 4](#4-pre-push-coverage-report-freshness)):
+
+```yaml
+# .markgate.yml
+gates:
+  coverage:
+    hash: files
+    include:
+      - "src/**"
+      - "tests/**"
+    state_dir: .markgate-state
+```
+
+```sh
+# Locally, after a successful coverage run:
+markgate run coverage -- go test -cover ./...
+git add .markgate-state/coverage.json
+git commit -m "bump coverage marker"
+git push
+
+# In CI (already sees the committed marker):
+markgate verify coverage || go test -cover ./...
+```
+
+Trust model: anyone with commit access can forge a skip. Use committed
+markers where commit-access already implies trust in the signal.
+
+### Notes
+
+- **Worktree isolation is lost** when the dir is shared across
+  worktrees pointing at the same location. The default `.git/`-based
+  layout preserves isolation; `--state-dir` does not.
+- **Relative paths** resolve from the repo top-level, not cwd, so
+  hook-invoked commands land in the same place regardless of where
+  they run from.
+- **Signing is not yet implemented** — markers are unsigned JSON.
+  Tamper resistance depends on who can write to the directory (cache /
+  repo).
+
 ## CLI reference
 
 ```text
@@ -376,6 +537,10 @@ so one-off scopes don't need a `.markgate.yml`:
 --hash git-tree|files    Override hash type for this call.
 --include <glob>         Repeatable. Override the gate's include list.
 --exclude <glob>         Repeatable. Override the gate's exclude list.
+--state-dir <path>       Directory to store marker files. Takes
+                         precedence over MARKGATE_STATE_DIR env and
+                         state_dir: in .markgate.yml. Default:
+                         <git-dir>/markgate. See "Sharing markers".
 ```
 
 Flag syntax is identical across hash types. With `--hash files`,
@@ -386,12 +551,30 @@ config file:
 markgate run --exclude 'vendor/**' -- make check
 ```
 
+### Environment variables
+
+```text
+MARKGATE_STATE_DIR       Marker storage directory. Same effect as
+                         --state-dir and state_dir: in config.
+                         Precedence: --state-dir > this env >
+                         state_dir: in .markgate.yml > default.
+```
+
 ## `.markgate.yml` (optional)
 
 Only needed for multiple gates, or for `files` hash, or to persist
-include/exclude. Looked up at
+include / exclude / state_dir. Looked up at
 `$(git rev-parse --show-toplevel)/.markgate.yml` (no parent-dir
 walking).
+
+Per-gate fields:
+
+| field | purpose |
+|---|---|
+| `hash` | `git-tree` (default) or `files` |
+| `include` | glob list; required for `hash: files` |
+| `exclude` | glob list |
+| `state_dir` | marker storage directory (override per gate). Prefer a **relative** path — it resolves against the repo top-level so it's identical on every machine. An absolute path committed here will point to nonexistent locations on other machines. CLI flag and `MARKGATE_STATE_DIR` still take precedence. |
 
 ### Generate a starter — `markgate init`
 
@@ -432,23 +615,36 @@ $(git rev-parse --git-dir)/markgate/<key>.json
 ```
 
 Inside `.git/`, so no gitignore entry is needed and worktrees stay
-isolated. The on-disk JSON layout is an implementation detail — the
-fields (including `version`, which is an internal schema marker) exist
-only for debugging and may change between releases without notice.
-Don't parse it.
+isolated. With `--state-dir <dir>`, `MARKGATE_STATE_DIR=<dir>`, or
+`state_dir:` in `.markgate.yml`, the location becomes `<dir>/<key>.json`
+instead — see
+[Sharing markers](#sharing-markers-across-machines-ci--teammates). The on-disk
+JSON layout is an implementation detail — the fields (including
+`version`, which is an internal schema marker) exist only for
+debugging and may change between releases without notice. Don't parse
+it.
 
 ## FAQ
 
 - **Does it work in git worktrees?** Yes. Markers live under each
   worktree's own `.git/` dir, so they don't leak across worktrees.
-- **Do I need to gitignore anything?** No — markers are under `.git/`.
+  (This isolation is lost if you point `--state-dir` at a shared
+  location.)
+- **Do I need to gitignore anything?** No for the default layout —
+  markers are under `.git/`. If you use `--state-dir` pointing inside
+  the repo, gitignore that directory.
 - **What if I don't want HEAD in the hash?** Use `hash: files` for
   that gate.
 - **Does `files` respect `.gitignore`?** No. `files` is explicit scope
   by design. Use `git-tree` when you want `.gitignore`-aware behavior.
-- **Can the marker be tampered with?** Locally, yes (it's a JSON file
-  under `.git/`). Signed / remote-shared markers are a future
-  consideration for CI-shared caches, not part of this release.
+- **Can markers be shared across machines / CI?** Yes, via
+  `--state-dir`, `MARKGATE_STATE_DIR`, or `state_dir:` in
+  `.markgate.yml`. See
+  [Sharing markers](#sharing-markers-across-machines-ci--teammates) for patterns
+  and trust considerations.
+- **Can the marker be tampered with?** Yes — it's a JSON file under
+  `.git/` (or wherever `--state-dir` points). Trust whoever can write
+  to that location. Signed markers are still a future consideration.
 
 ## License
 
