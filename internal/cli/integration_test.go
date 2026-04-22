@@ -551,8 +551,8 @@ func TestStateDir_StatusCmd(t *testing.T) {
 		t.Errorf("status output missing 'no marker' line:\n%s", out)
 	}
 
-	if code, _ := runCmd(t, "set", "check", "--state-dir", stateDir); code != 0 {
-		t.Fatalf("set: %d", code)
+	if setCode, _ := runCmd(t, "set", "check", "--state-dir", stateDir); setCode != 0 {
+		t.Fatalf("set: %d", setCode)
 	}
 	code, out = runCmd(t, "status", "check", "--state-dir", stateDir)
 	if code != 0 {
