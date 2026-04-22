@@ -8,6 +8,19 @@ Code hooks, husky, lefthook, pre-commit, bare `.git/hooks/*`). It
 records that a check passed at the current repo state so the next hook
 can skip re-running it.
 
+**Especially useful in the AI-coding-agent era.** Two patterns hit
+hard when Claude Code / Cursor / Codex / Copilot CLI is the one
+running checks:
+
+- **Redundancy** — the agent runs your `/check`, then the commit
+  hook runs it, then `gh pr create` runs it, then CI runs it.
+  `markgate` exits in milliseconds on every pass after the first.
+- **Skipped steps** — the agent may quietly skip the check it
+  promised to run (context loss, tool timeout, speed pressure).
+  Pair `markgate verify` with your pre-commit / PreToolUse hook and
+  the commit blocks until the check actually ran against the current
+  state. **No marker, no commit.**
+
 ## 20-second tour
 
 ```sh
@@ -32,11 +45,22 @@ command.)
 
 ## Why markgate?
 
-Your agent (or you) just ran `make check`. The commit hook runs it
-again. `gh pr create` runs it again. CI runs it again — four passes,
-one change. `markgate` lets the second / third / fourth of those exit
-instantly when the repo state hasn't moved. (The CI pass needs a bit
-of extra wiring — see [Sharing markers](#sharing-markers-across-machines-ci--teammates).)
+Two failure modes in an agent-driven workflow, one cache layer.
+
+**Redundant re-runs.** Your agent (or you) just ran `make check`.
+The commit hook runs it again. `gh pr create` runs it again. CI
+runs it again — four passes, one change. `markgate` lets the second
+/ third / fourth of those exit instantly when the repo state hasn't
+moved. (The CI pass needs a bit of extra wiring — see
+[Sharing markers](#sharing-markers-across-machines-ci--teammates).)
+
+**Quietly skipped checks.** Your agent decided to run `/check`, then
+ran out of tool budget / context and committed anyway. Or a tool
+call silently failed. Or it simply forgot. Wire `markgate verify`
+into your pre-commit or PreToolUse hook and there's no bypass by
+"forgetting" — a fresh marker exists only after a check actually
+passed against the current state. Exit 1 with "no marker" is a
+loud, debuggable failure; a silent skip is not.
 
 Concrete gates you can build (see [Use cases](#use-cases) for full
 configs):
@@ -51,11 +75,12 @@ configs):
   when `src/**` or `tests/**` changed.
 
 Existing hook managers (husky / lefthook / pre-commit / Claude Code
-hooks) are great at *running* checks. None of them *remember* that the
-checks just passed and nothing relevant has changed since. `markgate`
-is that memory layer — exit 0 means "verified, skip", exit 1 means
-"stale, re-run". It's not a hook manager itself; it slots into the one
-you already use — one line to adopt, one line to remove.
+hooks) are great at *running* checks. None of them remember that a
+check just passed, or notice when it hasn't run yet. `markgate` is
+that memory layer — exit 0 = "verified, skip", exit 1 = "stale or
+absent, run it". It's not a hook manager itself; it slots into
+whatever hook manager you already use — one line to adopt, one line
+to remove.
 
 ## Usage
 
