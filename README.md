@@ -407,6 +407,27 @@ git so CI sees it without any cache layer, skip to
 [Pattern B](#b-committed-files-hash) — that's a different shape, not
 a variant of this one.)
 
+> **⚠ Required for `hash: git-tree` + state dir inside the repo:
+> gitignore the state dir.** Not hygiene — *required*. The `git-tree`
+> digest includes untracked-not-ignored files, and the marker itself
+> is an untracked file. Without gitignore:
+>
+> 1. `markgate run` computes digest_1 (before the marker exists) and
+>    saves the marker with digest_1.
+> 2. The saved marker file now exists as untracked-not-ignored.
+> 3. The next `markgate verify` computes digest_2 — which *includes*
+>    the marker file — so digest_2 ≠ digest_1 → mismatch → the check
+>    re-runs every time. The feature is defeated on the first verify,
+>    before any commit.
+>
+> Gitignoring the state dir keeps the marker out of the digest.
+> Placing the state dir outside the repo (absolute path,
+> `$RUNNER_TEMP/...`, etc.) also works — untracked-not-ignored only
+> applies to files under the repo tree.
+>
+> `hash: files` sidesteps this: the marker is only in the digest if a
+> glob matches it. Gitignore is optional on `files` — pure hygiene.
+
 **Across runs of the same workflow** — `actions/cache`:
 
 ```yaml
@@ -424,17 +445,8 @@ jobs:
       - run: markgate run pre-image-push --state-dir .markgate-cache -- trivy fs .
 ```
 
-When the dir lives inside the repo, gitignore it **if you use
-`hash: git-tree`**. Why: an accidental `git add .` + commit pulls
-the marker into the commit, which changes HEAD, which stales the
-digest the marker just recorded — so the very next `verify` fails
-and the check runs again, defeating the whole point. Gitignoring the
-dir makes that accident impossible.
-
-With `hash: files` the marker survives being committed (it's outside
-the digest scope), so gitignoring is optional on that hash — treat
-it as hygiene (keeps `git status` clean, signals that these aren't
-tracked artifacts).
+Make sure `.markgate-cache/` is in `.gitignore` before the first run
+(see the warning above for why it's required on `git-tree`).
 
 **Across jobs within one workflow** — `actions/upload-artifact` →
 `actions/download-artifact`. A setup job runs the expensive check
