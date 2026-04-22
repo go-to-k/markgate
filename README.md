@@ -474,7 +474,9 @@ gitignore is optional on `files`.
 
 #### Step 2. Wire up CI
 
-**Across runs of the same workflow** — `actions/cache`:
+**Across runs of the same workflow** — `actions/cache`, extending the
+`pre-image-push` gate from
+[Use case 3](#3-pre-image-push-vulnerability-scan-freshness):
 
 ```yaml
 # .github/workflows/scan.yml
@@ -493,7 +495,10 @@ jobs:
 
 **Across jobs within one workflow** — `actions/upload-artifact` →
 `actions/download-artifact`. A setup job runs the expensive check
-once; matrix jobs on the same commit download the marker and skip:
+once; matrix jobs on the same commit download the marker and skip.
+(`expensive` below is a placeholder key — define it in your
+`.markgate.yml` using the [Use cases](#use-cases) as templates, or
+pass `--include` / `--hash` via CLI flags.)
 
 ```yaml
 jobs:

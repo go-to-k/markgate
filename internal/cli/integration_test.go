@@ -539,6 +539,30 @@ func TestStateDir_FlagBeatsConfig(t *testing.T) {
 	}
 }
 
+func TestStateDir_StatusCmd(t *testing.T) {
+	initRepo(t)
+	stateDir := t.TempDir()
+
+	code, out := runCmd(t, "status", "check", "--state-dir", stateDir)
+	if code != 1 {
+		t.Errorf("status with no marker: code = %d, want 1", code)
+	}
+	if !bytes.Contains([]byte(out), []byte("no marker")) {
+		t.Errorf("status output missing 'no marker' line:\n%s", out)
+	}
+
+	if code, _ := runCmd(t, "set", "check", "--state-dir", stateDir); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	code, out = runCmd(t, "status", "check", "--state-dir", stateDir)
+	if code != 0 {
+		t.Errorf("status after set: code = %d, want 0", code)
+	}
+	if !bytes.Contains([]byte(out), []byte("state:      match")) {
+		t.Errorf("status output missing match line:\n%s", out)
+	}
+}
+
 func TestStateDir_RunCmd(t *testing.T) {
 	dir := initRepo(t)
 	stateDir := t.TempDir()
