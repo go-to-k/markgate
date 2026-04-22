@@ -29,11 +29,31 @@ pre-commit) is good at *running* checks but has no concept of
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
+```sh
+brew install go-to-k/tap/markgate
+```
+
+### Shell script (macOS / Linux / Windows with Git Bash)
+
+```sh
+# Latest
+curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash
+
+# Pin a version
+curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash -s -- v0.1.0
+```
+
+### `go install`
+
 ```sh
 go install github.com/go-to-k/markgate/cmd/markgate@latest
 ```
 
-Release binaries (darwin/linux, amd64/arm64) are published on
+### Prebuilt binaries
+
+Linux / macOS / Windows (amd64, arm64, 386) archives are published on
 [GitHub Releases](https://github.com/go-to-k/markgate/releases).
 
 ## Quick start

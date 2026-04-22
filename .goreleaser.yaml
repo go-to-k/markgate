@@ -1,63 +1,49 @@
 version: 2
 
 project_name: markgate
-
+env:
+  - GO111MODULE=on
 before:
   hooks:
     - go mod tidy
-
 builds:
-  - id: markgate
-    main: ./cmd/markgate
+  - main: ./cmd/markgate
     binary: markgate
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
     env:
       - CGO_ENABLED=0
-    ldflags:
-      - -s -w -X main.version={{.Version}}
     goos:
       - linux
+      - windows
       - darwin
-    goarch:
-      - amd64
-      - arm64
-
 archives:
-  - id: default
-    formats: [tar.gz]
-    name_template: >-
-      {{ .ProjectName }}_
-      {{- .Version }}_
-      {{- .Os }}_
-      {{- .Arch }}
-
+  - name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
 checksum:
   name_template: "checksums.txt"
-
 snapshot:
-  version_template: "{{ incpatch .Version }}-next"
-
+  name_template: "{{ .Version }}-next"
 changelog:
   sort: asc
   filters:
     exclude:
       - "^docs:"
       - "^test:"
-      - "^chore:"
-
 brews:
-  - name: markgate
-    repository:
+  - repository:
       owner: go-to-k
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
     homepage: https://github.com/go-to-k/markgate
     description: State-cached gate primitive for hook managers
-    license: MIT
-    directory: Formula
-    commit_author:
-      name: goreleaserbot
-      email: bot@goreleaser.com
-    install: |
-      bin.install "markgate"
     test: |
       system "#{bin}/markgate", "version"
+release:
+  use_existing_draft: true

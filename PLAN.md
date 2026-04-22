@@ -264,14 +264,19 @@ func versionString() string {
 
 ## 14. 実装時の決定 (履歴)
 
-実装着手後に以下のように決着:
+実装着手後に以下のように決着 (delstack の構成を踏襲):
 
-1. **Homebrew tap**: 初回から対応。既存の `go-to-k/homebrew-tap` を使用。GoReleaser の `brews` セクションで連携、release workflow で `HOMEBREW_TAP_TOKEN` secret (tap repo への push 権限) が必要。
-2. **golangci-lint**: CI に組み込む。v2 最小構成 (`errcheck` / `govet` / `ineffassign` / `staticcheck` / `unused` + formatters `gofmt`)。`errcheck` は `fmt.Fprintln` / `fmt.Fprintf` を除外設定。
-3. **gitutil のテスト / mock**: git バイナリ実在を前提にする。`gitutil` 自体の直接単体テストは書かず、`hasher` / `cli` 経由の結合テストでカバー。mock 機構は導入しない。
-4. **リリースフロー**: [tagpr](https://github.com/Songmu/tagpr) を採用。main への push で tagpr が release PR を自動生成、merge すると tag が打たれ、tag push で GoReleaser (別 workflow) が起動する二段構成。
-5. **初回リリースの前提**: リポジトリが public であること。private の間は tagpr の release PR を merge しない (GoReleaser が生成する Homebrew formula が private リポの release asset を 401 で取得できないため)。
-6. **GoReleaser `brews` の deprecation**: goreleaser v2 の warning により `brews` は将来 rename 予定。初回は現状の `brews:` で進め、public 化直前に新キーへ書き換える。
+1. **Homebrew tap**: 初回から対応。既存の `go-to-k/homebrew-tap` を使用。GoReleaser の `brews` セクションで連携、release 経路で `HOMEBREW_TAP_GITHUB_TOKEN` secret (tap repo への push 権限のある PAT) が必要。
+2. **CI での lint**: `reviewdog/action-golangci-lint@v2` を採用。`go.mod` の Go バージョンに追従して golangci-lint v2 系を install するため。`golangci/golangci-lint-action@v6` は初回 CI で golangci-lint v1.64.8 (Go 1.24 build) を install して `go 1.25.0` の `go.mod` を扱えず失敗した。
+3. **golangci-lint 設定**: v2 最小構成 (`errcheck` / `govet` / `ineffassign` / `staticcheck` / `unused` + formatters `gofmt`)。`errcheck` は `fmt.Fprintln` / `fmt.Fprintf` を除外設定。
+4. **gitutil のテスト / mock**: git バイナリ実在を前提にする。`gitutil` 自体の直接単体テストは書かず、`hasher` / `cli` 経由の結合テストでカバー。mock 機構は導入しない。
+5. **リリースフロー**: [tagpr](https://github.com/Songmu/tagpr) を採用。main への push で tagpr が release PR を自動生成、merge されると tagpr が tag を打ち、同 workflow 内の composite action (`.github/actions/release`) が GoReleaser を実行する。手動 tag push 向けに `manual.yml` も用意 (同じ composite action を呼ぶ)。
+6. **リリースは draft**: `.tagpr` の `release = draft` + `.goreleaser.yaml` の `release.use_existing_draft: true` により、GoReleaser は tagpr が作った draft release に asset を追記する。手動で publish することで事故防止。 **GitHub 側でも Settings → Releases の immutable release 設定を有効化する必要がある** (publish 済み release 本体の事後変更不可化)。
+7. **ビルド対象 OS**: Linux / macOS / Windows (amd64 / arm64 / 386)。GoReleaser の archive 名は `{{ .ProjectName }}_{{ .Version }}_{{ title .Os }}_{{ x86_64 | i386 | arm64 }}` 形式で、同梱 `install.sh` と整合。
+8. **install.sh**: `curl -fsSL ... | bash` 方式の shell installer を同梱。`github.com/go-to-k/markgate/releases` の tar.gz を取得して `/usr/local/bin/markgate` に展開。バージョン引数省略時は latest。
+9. **PR title / label**: `semantic-pull-request.yml` workflow で Conventional Commits 接頭辞 (`feat:` / `fix:` など) を enforce + `major-release` / `minor-release` / `patch-release` ラベルを PR title から自動付与。tagpr の semver 判定に使う (`.tagpr` の `majorLabels` / `minorLabels`)。
+10. **初回リリースの前提**: リポジトリが public であること。private の間は tagpr の release PR を merge しない (GoReleaser が生成する Homebrew formula が private リポの release asset を 401 で取得できないため)。
+11. **GoReleaser `brews` の deprecation**: goreleaser v2 の warning により `brews` は将来 rename 予定。初回は現状の `brews:` で進め、public 化直前に新キーへ書き換える。
 
 ---
 

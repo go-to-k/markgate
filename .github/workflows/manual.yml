@@ -1,28 +1,22 @@
-name: tagpr
+# for manual release (No triggering when tagpr is used.)
+name: manual
 on:
   push:
-    branches:
-      - "main"
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
-  tagpr:
+  manual:
     runs-on: ubuntu-latest
     steps:
-      - name: checkout
+      - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: tagpr
-        id: tagpr
-        uses: Songmu/tagpr@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: ./.github/actions/release
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           homebrew-tap-github-token: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-        if: steps.tagpr.outputs.tag != ''
