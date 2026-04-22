@@ -121,6 +121,15 @@ it returns. Otherwise subagent findings can come from the wrong
 branch (e.g. "function X doesn't exist" because the agent was on a
 branch where X hasn't landed yet).
 
+For review tasks that span multiple branches, or to avoid *any* risk
+of the subagent shifting your working tree, pass
+`isolation: "worktree"` when spawning it. The agent runs against a
+throwaway git worktree, so its checkouts / edits never leak back.
+
+Always verify a subagent's negative findings ("X doesn't exist", "no
+reference to Y") against your current branch with `grep` before
+acting — the answer is only as good as the branch the agent read.
+
 ### Commit messages with non-ASCII
 
 When a commit message contains Japanese or other non-ASCII text,

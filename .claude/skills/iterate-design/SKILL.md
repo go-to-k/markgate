@@ -84,8 +84,24 @@ Before reporting done, self-audit without waiting to be asked:
 - `init.go` skeleton needs a comment?
 - Package doc comment (`// Package xyz ...`) still accurate?
 
-Report the result — "no gaps" or "one stale link, fixing" — in the
-same message that announces completion.
+**Don't settle for "no gaps" from a superficial check.** A self-audit
+that returns empty is usually a narrow audit, not a complete feature.
+When tempted to declare "complete", widen the lens:
+
+- Grep for every name introduced (flag names, env vars, config keys,
+  new exported symbols) and confirm every doc and code reference
+  matches.
+- Run a fresh smoke test of the *built* binary in a throwaway repo,
+  not just `go test ./...`. Failed smokes are valuable data — they
+  often expose docs gaps or wiring bugs that unit tests don't.
+- Cross-check claims that point at other sections: if the Why
+  section says "four passes, one change", are all four passes
+  actually wired up, or is one of them aspirational?
+
+Report the result — "no gaps after N checks" or "one stale link,
+fixing" — in the same message that announces completion. If the user
+then finds something the audit missed, that's a signal the checklist
+above needs a new entry.
 
 ## Post-merge: manual smoke
 
