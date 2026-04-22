@@ -239,7 +239,39 @@ touch these paths" semantics.
 Only needed for multiple gates, or for `files` hash, or to persist
 include/exclude for the default `git-tree`. Looked up at
 `$(git rev-parse --show-toplevel)/.markgate.yml` (no parent-dir
-walking). Use `markgate init` to drop a starter file:
+walking).
+
+### Generate a starter file — `markgate init`
+
+```sh
+markgate init          # creates .markgate.yml at the repo root
+markgate init --force  # overwrite an existing one (refuses without --force)
+```
+
+The generated file enables the default `git-tree` gate and has
+commented-out examples for `exclude` and for a `files`-type gate, so
+you can uncomment what you need:
+
+```yaml
+# markgate configuration - https://github.com/go-to-k/markgate
+
+gates:
+  # Default gate (used when `markgate verify` runs without a key).
+  default:
+    hash: git-tree
+    # exclude:
+    #   - "vendor/**"
+    #   - "node_modules/**"
+
+  # Example: narrow-scope gate for PR-time docs checks.
+  # pre-pr:
+  #   hash: files
+  #   include:
+  #     - "docs/**"
+  #     - "README.md"
+```
+
+### Hand-written example
 
 ```yaml
 gates:
