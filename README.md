@@ -450,7 +450,7 @@ You can skip this only if:
   required — see why below).
 
 <details>
-<summary>Why it's required on <code>git-tree</code> (click to expand)</summary>
+<summary>Why it's required on <code>hash: git-tree</code> (click to expand)</summary>
 
 The `git-tree` digest hashes `HEAD + diff-vs-HEAD ∪
 untracked-not-ignored`. The saved marker file is itself an untracked
