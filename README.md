@@ -27,10 +27,10 @@ or a bare `.git/hooks/pre-commit`).
 
 ```sh
 # One-shot: verify, run the check on mismatch, record the marker on success.
-markgate run -- pnpm run check
+markgate run -- make check
 
 # Or the two-step form:
-markgate verify || { pnpm run check && markgate set; }
+markgate verify || { make check && markgate set; }
 ```
 
 Zero config. No key argument needed for the default case.
@@ -79,7 +79,7 @@ marker.
 This follows the `grep` / `diff` convention, so it composes cleanly:
 
 ```sh
-markgate verify || pnpm run check
+markgate verify || make check
 ```
 
 The default hash covers `HEAD` plus every file that differs from `HEAD`
@@ -109,7 +109,7 @@ Most hook setups only need this one command.
 
 ```sh
 # In your check command:
-pnpm run check && markgate set
+make check && markgate set
 
 # In your Claude Code PreToolUse hook on `git commit*`:
 markgate verify
@@ -267,7 +267,7 @@ parse it.
 In your check skill:
 
 ```sh
-pnpm run check && markgate set
+make check && markgate set
 ```
 
 ### husky
@@ -275,7 +275,7 @@ pnpm run check && markgate set
 `.husky/pre-commit`:
 
 ```sh
-markgate run -- pnpm run check
+markgate run -- make check
 ```
 
 ### lefthook
@@ -286,7 +286,7 @@ markgate run -- pnpm run check
 pre-commit:
   commands:
     check:
-      run: markgate run -- pnpm run check
+      run: markgate run -- make check
 ```
 
 ### pre-commit framework
@@ -299,7 +299,7 @@ repos:
     hooks:
       - id: markgate-check
         name: markgate check
-        entry: markgate run -- pnpm run check
+        entry: markgate run -- make check
         language: system
         pass_filenames: false
 ```
