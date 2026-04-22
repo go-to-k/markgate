@@ -91,6 +91,13 @@ When tempted to declare "complete", widen the lens:
 - Grep for every name introduced (flag names, env vars, config keys,
   new exported symbols) and confirm every doc and code reference
   matches.
+- **Check the runtime surface, not just files.** Run `<binary>
+  <subcommand> --help` and compare against the README's CLI
+  reference and env var list. When a new source is added to a
+  precedence chain (e.g. config layer added to `flag > env > default`),
+  godoc on the related constants, flag `--help` strings, and package
+  doc comments all tend to still describe the *old* chain. These are
+  user-facing too and drift silently.
 - Run a fresh smoke test of the *built* binary in a throwaway repo,
   not just `go test ./...`. Failed smokes are valuable data — they
   often expose docs gaps or wiring bugs that unit tests don't.
