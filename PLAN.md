@@ -47,18 +47,18 @@ markgate run <key> -- <cmd> [args...]
 ## 4. CLI コマンド
 
 ```
-markgate set <key>         # 現 state の marker を書く
-markgate verify <key>      # 現 state と marker を照合 (exit 0 / 1 / 2)
-markgate status <key>      # marker 情報 + 鮮度 + 差分理由 (exit は verify と同じ)
-markgate clear <key>       # marker 強制削除
-markgate run <key> -- <cmd> [args...]   # 糖衣: verify → 不一致時に cmd → 成功なら set
-markgate version           # version 情報 (サブコマンド形式)
-markgate --version         # 同上 (フラグ形式、cobra 標準)
+markgate set    [key]              # 現 state の marker を書く
+markgate verify [key]              # 現 state と marker を照合 (exit 0 / 1 / 2)
+markgate status [key]              # marker 情報 + 鮮度 + 差分理由 (exit は verify と同じ)
+markgate clear  [key]              # marker 強制削除
+markgate run    [key] -- <cmd> [args...]   # 糖衣: verify → 不一致時に cmd → 成功なら set
+markgate version                   # version 情報 (サブコマンド形式)
+markgate --version                 # 同上 (フラグ形式、cobra 標準)
 ```
 
-- `<key>` は positional、必須 (省略不可)
-- `<key>` のバリデーション: `^[a-z0-9][a-z0-9-]*$` (kebab-case)
-- README の推奨例: `pre-commit` / `pre-push` / `pre-pr` / `check`
+- `[key]` は positional、**省略可**。省略時は `default` を使う。
+- `[key]` のバリデーション: `^[a-z0-9][a-z0-9-]*$` (kebab-case)
+- 典型的には単一キー (`default`) 運用で十分。複数ゲートが必要な場合だけ `pre-commit` / `pre-push` / `pre-pr` 等の key を指定する。
 
 ### エッジケースと exit code の挙動
 
@@ -276,8 +276,18 @@ func versionString() string {
 8. **install.sh**: `curl -fsSL ... | bash` 方式の shell installer を同梱。`github.com/go-to-k/markgate/releases` の tar.gz を取得して `/usr/local/bin/markgate` に展開。バージョン引数省略時は latest。
 9. **PR title / label**: `semantic-pull-request.yml` workflow で Conventional Commits 接頭辞 (`feat:` / `fix:` など) を enforce + `major-release` / `minor-release` / `patch-release` ラベルを PR title から自動付与。tagpr の semver 判定に使う (`.tagpr` の `majorLabels` / `minorLabels`)。
 10. **初回リリースの前提**: リポジトリが public であること。private の間は tagpr の release PR を merge しない (GoReleaser が生成する Homebrew formula が private リポの release asset を 401 で取得できないため)。
-11. **GoReleaser `brews` の deprecation**: goreleaser v2 の warning により `brews` は将来 rename 予定。初回は現状の `brews:` で進め、public 化直前に新キーへ書き換える。
+11. **GoReleaser Homebrew 配布**: `brews:` は deprecated のため、初回から **`homebrew_casks:`** (後継キー) を採用。未署名バイナリに必要な macOS quarantine 除去 hook (`xattr -dr com.apple.quarantine ...`) を `hooks.post.install` に組み込む。`snapshot.name_template` → `version_template` への rename、`homebrew_casks.binary` → `binaries: [...]` への rename も同時適用し、`goreleaser check` を 0 deprecation で通している。
 
 ---
 
-以上。承認されれば実装タスク 1 から順次着手。
+---
+
+## 15. public 化前のチェックリスト
+
+初回公開 (初回リリース) 前にリポジトリオーナーが手動で済ませる必要がある設定:
+
+- [ ] リポジトリを public に切替
+- [ ] Secret `HOMEBREW_TAP_GITHUB_TOKEN` を登録 (go-to-k/homebrew-tap に push 権限を持つ PAT)
+- [ ] Settings → Releases → Immutable releases を有効化 (`release = draft` フローで公開後の rewrite 事故を防ぐ)
+- [ ] 最初の tagpr release PR を merge して v0.1.0 を draft として作成 → 手動 publish
+

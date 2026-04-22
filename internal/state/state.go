@@ -68,8 +68,8 @@ func Save(path string, m *Marker) error {
 	data = append(data, '\n')
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+		return mkErr
 	}
 
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")

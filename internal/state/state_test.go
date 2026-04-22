@@ -42,7 +42,7 @@ func TestLoad_NotFound(t *testing.T) {
 
 func TestLoad_CorruptJSON(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "bad.json")
-	if err := os.WriteFile(p, []byte("not json"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Load(p)

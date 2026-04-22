@@ -94,9 +94,9 @@ func hashEntry(h io.Writer, abs, rel string) error {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		target, err := os.Readlink(abs)
-		if err != nil {
-			return err
+		target, readErr := os.Readlink(abs)
+		if readErr != nil {
+			return readErr
 		}
 		fmt.Fprintf(h, "L\x00%s\x00%s\x00", rel, target)
 		return nil
@@ -111,8 +111,8 @@ func hashEntry(h io.Writer, abs, rel string) error {
 	}
 	defer func() { _ = f.Close() }()
 	fmt.Fprintf(h, "F\x00%s\x00%d\x00", rel, info.Size())
-	if _, err := io.Copy(h, f); err != nil {
-		return err
+	if _, copyErr := io.Copy(h, f); copyErr != nil {
+		return copyErr
 	}
 	// Terminator so the next entry's header starts cleanly.
 	_, err = h.Write([]byte{0})

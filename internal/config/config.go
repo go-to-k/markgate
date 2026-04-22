@@ -37,14 +37,14 @@ type Gate struct {
 	Exclude []string `yaml:"exclude,omitempty"`
 }
 
-// Load reads topLevel/.markgate.yml. Missing file returns (nil, nil) so
-// callers can treat "no config" and "empty config" identically.
+// Load reads topLevel/.markgate.yml. A missing file yields an empty
+// Config (never nil) so callers can always call c.Gate(...) safely.
 func Load(topLevel string) (*Config, error) {
 	path := filepath.Join(topLevel, Filename)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return &Config{}, nil
 		}
 		return nil, err
 	}

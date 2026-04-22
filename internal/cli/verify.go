@@ -10,11 +10,11 @@ import (
 
 func newVerifyCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "verify <key>",
-		Short: "Check the current state against the marker (exit 0 match, 1 mismatch, 2 error)",
-		Args:  cobra.ExactArgs(1),
+		Use:   "verify [key]",
+		Short: "Check current state against the marker (exit 0 match, 1 mismatch, 2 error)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			c, err := newGateCtx(args[0])
+			c, err := newGateCtx(resolveKey(args))
 			if err != nil {
 				return err
 			}

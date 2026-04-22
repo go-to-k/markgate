@@ -10,11 +10,11 @@ import (
 
 func newSetCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "set <key>",
-		Short: "Record the current state hash as the marker for <key>",
-		Args:  cobra.ExactArgs(1),
+		Use:   "set [key]",
+		Short: "Record the current state hash as the marker (default key: \"default\")",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newGateCtx(args[0])
+			c, err := newGateCtx(resolveKey(args))
 			if err != nil {
 				return err
 			}

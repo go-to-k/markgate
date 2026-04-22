@@ -8,7 +8,7 @@ import (
 
 func writeConfig(t *testing.T, dir, body string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, Filename), []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, Filename), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -18,8 +18,11 @@ func TestLoad_Missing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c != nil {
-		t.Errorf("want nil config, got %+v", c)
+	if c == nil {
+		t.Fatal("want non-nil empty config, got nil")
+	}
+	if g := c.Gate("anything"); g.Hash != HashGitTree {
+		t.Errorf("missing-file default = %q, want %q", g.Hash, HashGitTree)
 	}
 }
 

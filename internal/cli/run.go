@@ -14,14 +14,15 @@ import (
 
 func newRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "run <key> -- <cmd> [args...]",
+		Use:   "run [key] -- <cmd> [args...]",
 		Short: "Sugar for verify + set: verify; on mismatch run <cmd>; on success set the marker",
 		Long: "run combines `markgate verify` and `markgate set` into a single invocation,\n" +
 			"wedging <cmd> in between. It is sugar for:\n\n" +
-			"  markgate verify <key> || ( <cmd> && markgate set <key> )\n\n" +
-			"Arguments after `--` are executed verbatim (no shell interpretation).",
+			"  markgate verify [key] || ( <cmd> && markgate set [key] )\n\n" +
+			"If [key] is omitted, the default key is used. Arguments after `--`\n" +
+			"are executed verbatim (no shell interpretation).",
 		DisableFlagParsing: false,
-		Args:               cobra.MinimumNArgs(2),
+		Args:               cobra.MinimumNArgs(1),
 		RunE:               runE,
 	}
 	return cmd
@@ -32,10 +33,13 @@ func runE(cmd *cobra.Command, args []string) error {
 	if dash < 0 {
 		return &ExitError{Code: 2, Err: errors.New("run: '--' separator before the command is required")}
 	}
-	if dash != 1 {
-		return &ExitError{Code: 2, Err: errors.New("run: exactly one <key> must precede '--'")}
+	if dash > 1 {
+		return &ExitError{Code: 2, Err: errors.New("run: at most one [key] may precede '--'")}
 	}
-	keyArg := args[0]
+	keyArg := DefaultKey
+	if dash == 1 {
+		keyArg = args[0]
+	}
 	cmdArgs := args[dash:]
 	if len(cmdArgs) == 0 {
 		return &ExitError{Code: 2, Err: errors.New("run: a command after '--' is required")}
@@ -50,9 +54,9 @@ func runE(cmd *cobra.Command, args []string) error {
 	m, loadErr := state.Load(c.markerPath)
 	switch {
 	case loadErr == nil:
-		digest, err := c.hasher.Hash(c.repo)
-		if err != nil {
-			return &ExitError{Code: 2, Err: err}
+		digest, hashErr := c.hasher.Hash(c.repo)
+		if hashErr != nil {
+			return &ExitError{Code: 2, Err: hashErr}
 		}
 		if m.HashType == c.hasher.Type() && m.Digest == digest {
 			return nil
@@ -63,9 +67,11 @@ func runE(cmd *cobra.Command, args []string) error {
 		return &ExitError{Code: 2, Err: loadErr}
 	}
 
-	if code, err := execChild(cmdArgs); err != nil {
-		return &ExitError{Code: 2, Err: err}
-	} else if code != 0 {
+	code, execErr := execChild(cmdArgs)
+	if execErr != nil {
+		return &ExitError{Code: 2, Err: execErr}
+	}
+	if code != 0 {
 		return &ExitError{Code: code}
 	}
 
@@ -84,7 +90,9 @@ func runE(cmd *cobra.Command, args []string) error {
 // to the child. It returns the child's exit code, or a non-nil error if
 // the process could not be started.
 func execChild(argv []string) (int, error) {
-	child := exec.Command(argv[0], argv[1:]...)
+	// User-supplied command is the whole point of `markgate run`;
+	// passing it to exec.Command is intentional.
+	child := exec.Command(argv[0], argv[1:]...) //nolint:gosec // G204
 	child.Stdin = os.Stdin
 	child.Stdout = os.Stdout
 	child.Stderr = os.Stderr

@@ -10,11 +10,11 @@ import (
 
 func newClearCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "clear <key>",
-		Short: "Remove the marker for <key> (idempotent)",
-		Args:  cobra.ExactArgs(1),
+		Use:   "clear [key]",
+		Short: "Remove the marker (idempotent)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newGateCtx(args[0])
+			c, err := newGateCtx(resolveKey(args))
 			if err != nil {
 				return err
 			}

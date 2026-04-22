@@ -28,22 +28,29 @@ archives:
 checksum:
   name_template: "checksums.txt"
 snapshot:
-  name_template: "{{ .Version }}-next"
+  version_template: "{{ .Version }}-next"
 changelog:
   sort: asc
   filters:
     exclude:
       - "^docs:"
       - "^test:"
-brews:
-  - repository:
+homebrew_casks:
+  - name: markgate
+    binaries: [markgate]
+    repository:
       owner: go-to-k
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
+    directory: Casks
     homepage: https://github.com/go-to-k/markgate
     description: State-cached gate primitive for hook managers
-    test: |
-      system "#{bin}/markgate", "version"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr",
+              args: ["-dr", "com.apple.quarantine", "#{staged_path}/markgate"]
+          end
 release:
   use_existing_draft: true

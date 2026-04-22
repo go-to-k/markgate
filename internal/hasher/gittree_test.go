@@ -58,8 +58,8 @@ func TestGitTree_DetectsDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.Remove(filepath.Join(dir, "a.txt")); err != nil {
-		t.Fatal(err)
+	if rmErr := os.Remove(filepath.Join(dir, "a.txt")); rmErr != nil {
+		t.Fatal(rmErr)
 	}
 
 	d2, err := GitTree{}.Hash(repo)
@@ -97,7 +97,7 @@ func writeFile(t *testing.T, dir, rel, body string) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

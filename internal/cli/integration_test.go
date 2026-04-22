@@ -47,7 +47,7 @@ func initRepo(t *testing.T) string {
 	run("init", "-q", "-b", "main")
 	run("config", "user.email", "test@example.com")
 	run("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run("add", ".")
@@ -62,7 +62,7 @@ func writeRepoFile(t *testing.T, dir, rel, body string) {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -206,6 +206,51 @@ func TestRun_RequiresDashDash(t *testing.T) {
 	initRepo(t)
 	if code, _ := runCmd(t, "run", "check", "echo", "hi"); code != 2 {
 		t.Errorf("run without --: code = %d, want 2", code)
+	}
+}
+
+func TestSetVerify_DefaultKey(t *testing.T) {
+	dir := initRepo(t)
+
+	if code, _ := runCmd(t, "verify"); code != 1 {
+		t.Errorf("initial verify (default): code = %d, want 1 (no marker)", code)
+	}
+	if code, _ := runCmd(t, "set"); code != 0 {
+		t.Errorf("set (default): code = %d, want 0", code)
+	}
+	if code, _ := runCmd(t, "verify"); code != 0 {
+		t.Errorf("verify after set (default): code = %d, want 0", code)
+	}
+
+	writeRepoFile(t, dir, "seed.txt", "edit")
+	if code, _ := runCmd(t, "verify"); code != 1 {
+		t.Errorf("verify after edit (default): code = %d, want 1", code)
+	}
+	if code, _ := runCmd(t, "clear"); code != 0 {
+		t.Errorf("clear (default): code = %d, want 0", code)
+	}
+}
+
+func TestRun_DefaultKey(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "seed.txt", "edit")
+
+	if code, _ := runCmd(t, "run", "--", "true"); code != 0 {
+		t.Errorf("run --default-- success: code = %d, want 0", code)
+	}
+	if code, _ := runCmd(t, "verify"); code != 0 {
+		t.Errorf("verify after default run: code = %d, want 0", code)
+	}
+
+	if code, _ := runCmd(t, "run", "--", "true"); code != 0 {
+		t.Errorf("re-run (matches): code = %d, want 0", code)
+	}
+}
+
+func TestRun_TooManyKeys(t *testing.T) {
+	initRepo(t)
+	if code, _ := runCmd(t, "run", "a", "b", "--", "true"); code != 2 {
+		t.Errorf("run with two keys before --: code = %d, want 2", code)
 	}
 }
 

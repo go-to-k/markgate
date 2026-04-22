@@ -8,6 +8,17 @@ import (
 	"github.com/go-to-k/markgate/internal/state"
 )
 
+// DefaultKey is the key used when the user omits the positional argument.
+const DefaultKey = "default"
+
+// resolveKey returns args[0] when present, otherwise DefaultKey.
+func resolveKey(args []string) string {
+	if len(args) == 0 {
+		return DefaultKey
+	}
+	return args[0]
+}
+
 // gateCtx bundles the resolved context for a single gate key so subcommands
 // can stay focused on their own logic.
 type gateCtx struct {

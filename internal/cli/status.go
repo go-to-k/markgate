@@ -12,11 +12,11 @@ import (
 
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "status <key>",
-		Short: "Show marker information and freshness for <key>",
-		Args:  cobra.ExactArgs(1),
+		Use:   "status [key]",
+		Short: "Show marker information and freshness",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := newGateCtx(args[0])
+			c, err := newGateCtx(resolveKey(args))
 			if err != nil {
 				return err
 			}
