@@ -1,0 +1,118 @@
+name: "Lint PR"
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  lint:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            docs
+            test
+            ci
+            refactor
+            style
+            perf
+            revert
+            Revert
+          scopes: |
+            deps
+            cli
+            config
+            gitutil
+            hasher
+            key
+            state
+            run
+          requireScope: false
+          ignoreLabels: |
+            tagpr
+
+  label:
+    name: Manage labels
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MINOR_LABEL: "minor-release"
+      MINOR_LABEL_COLOR: "#FBCA04"
+      MAJOR_LABEL: "major-release"
+      MAJOR_LABEL_COLOR: "#D93F0B"
+      PATCH_LABEL: "patch-release"
+      PATCH_LABEL_COLOR: "#C5DEF5"
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v6
+      - name: Create labels if they do not exist
+        run: |
+          EXISTING_LABELS=$(gh label list --json name --jq '.[].name')
+
+          if ! echo "$EXISTING_LABELS" | grep -qx "$MINOR_LABEL"; then
+            gh label create "$MINOR_LABEL" --color "$MINOR_LABEL_COLOR"
+          fi
+
+          if ! echo "$EXISTING_LABELS" | grep -qx "$MAJOR_LABEL"; then
+            gh label create "$MAJOR_LABEL" --color "$MAJOR_LABEL_COLOR"
+          fi
+
+          if ! echo "$EXISTING_LABELS" | grep -qx "$PATCH_LABEL"; then
+            gh label create "$PATCH_LABEL" --color "$PATCH_LABEL_COLOR"
+          fi
+      - name: Manage labels based on PR title
+        run: |
+          TITLE=$(jq -r '.pull_request.title' < "$GITHUB_EVENT_PATH")
+          PR_NUMBER=${{ github.event.pull_request.number }}
+
+          LABELS=$(gh pr view $PR_NUMBER --json labels --jq '.labels[].name')
+
+          TAGPR_LABEL=$(echo "$LABELS" | grep -qx "tagpr" && echo "true" || echo "false")
+          HAS_MINOR_LABEL=$(echo "$LABELS" | grep -qx "$MINOR_LABEL" && echo "true" || echo "false")
+          HAS_MAJOR_LABEL=$(echo "$LABELS" | grep -qx "$MAJOR_LABEL" && echo "true" || echo "false")
+          HAS_PATCH_LABEL=$(echo "$LABELS" | grep -qx "$PATCH_LABEL" && echo "true" || echo "false")
+
+          if [ "$TAGPR_LABEL" = "true" ]; then
+            exit 0
+          fi
+
+          if [ "$HAS_MAJOR_LABEL" = "true" ]; then
+            if [ "$HAS_PATCH_LABEL" = "true" ];then
+              gh pr edit $PR_NUMBER --remove-label "$PATCH_LABEL"
+            fi
+            if [ "$HAS_MINOR_LABEL" = "true" ];then
+              gh pr edit $PR_NUMBER --remove-label "$MINOR_LABEL"
+            fi
+            exit 0
+          fi
+
+          if [[ $TITLE =~ ^feat.* ]]; then
+            if [ "$HAS_MINOR_LABEL" = "false" ];then
+              gh pr edit $PR_NUMBER --add-label "$MINOR_LABEL"
+            fi
+            if [ "$HAS_PATCH_LABEL" = "true" ];then
+              gh pr edit $PR_NUMBER --remove-label "$PATCH_LABEL"
+            fi
+          else
+            if [ "$HAS_PATCH_LABEL" = "false" ];then
+              gh pr edit $PR_NUMBER --add-label "$PATCH_LABEL"
+            fi
+            if [ "$HAS_MINOR_LABEL" = "true" ];then
+              gh pr edit $PR_NUMBER --remove-label "$MINOR_LABEL"
+            fi
+          fi

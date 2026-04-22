@@ -1,0 +1,46 @@
+{
+    "cSpell.words": [
+        "markgate",
+        "tagpr",
+        "doublestar",
+        "goreleaser",
+        "Unshallow",
+        "unshallow",
+        "gomod",
+        "ldflags",
+        "errcheck",
+        "errname",
+        "errorlint",
+        "gocritic",
+        "gosec",
+        "misspell",
+        "nilerr",
+        "nilnil",
+        "unconvert",
+        "unparam",
+        "ineffassign",
+        "staticcheck",
+        "gofmt",
+        "goimports",
+        "Fprintln",
+        "Fprintf",
+        "gitutil",
+        "kebab",
+        "toplevel",
+        "worktree",
+        "worktrees",
+        "xattr"
+    ],
+    "gopls": {
+        "analyses": {
+            "shadow": true
+        }
+    },
+    "go.lintTool": "golangci-lint",
+    "go.lintFlags": [
+        "--fast"
+    ],
+    "[markdown]": {
+        "editor.defaultFormatter": "DavidAnson.vscode-markdownlint"
+    }
+}

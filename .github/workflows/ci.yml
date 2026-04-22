@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    paths-ignore:
+      - "README.md"
+    tags-ignore:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+    branches:
+      - "**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+        id: go
+      - name: Cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - name: Unshallow
+        run: git fetch --prune --unshallow --tags
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test ./... -race
+      - name: build
+        run: go build ./...
+
+  reviewdog:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: lint
+        uses: reviewdog/action-golangci-lint@v2
+        with:
+          go_version_file: go.mod
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-check
+          level: error
+          filter_mode: nofilter
+          golangci_lint_flags: "--config=.golangci.yml"
+          fail_level: error
