@@ -48,6 +48,12 @@ func Load(path string) (*Marker, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse marker %s: %w", path, err)
 	}
+	// Forward-compat: a marker written by a different schema version is
+	// treated as absent so the caller re-runs and rewrites with the
+	// current schema. Prevents cross-version digest comparisons.
+	if m.Version != SchemaVersion {
+		return nil, ErrNotFound
+	}
 	return &m, nil
 }
 

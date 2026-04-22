@@ -40,6 +40,18 @@ func TestLoad_NotFound(t *testing.T) {
 	}
 }
 
+func TestLoad_SchemaVersionMismatch(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "stale.json")
+	body := []byte(`{"version":99,"hash_type":"git-tree","digest":"abc","created_at":"2026-01-01T00:00:00Z"}`)
+	if err := os.WriteFile(p, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(p)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("want ErrNotFound for mismatched schema version, got %v", err)
+	}
+}
+
 func TestLoad_CorruptJSON(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "bad.json")
 	if err := os.WriteFile(p, []byte("not json"), 0o600); err != nil {
