@@ -37,7 +37,7 @@ type Hasher interface {
 func For(g config.Gate) (Hasher, error) {
 	switch g.Hash {
 	case "", config.HashGitTree:
-		return GitTree{}, nil
+		return GitTree{Include: g.Include, Exclude: g.Exclude}, nil
 	case config.HashFiles:
 		return Files{Include: g.Include, Exclude: g.Exclude}, nil
 	default:
@@ -47,13 +47,18 @@ func For(g config.Gate) (Hasher, error) {
 
 // GitTree hashes HEAD plus every file that differs from HEAD or is
 // untracked-and-not-ignored. Deleted files contribute a deletion record.
-type GitTree struct{}
+// Include/Exclude are optional glob filters applied to the candidate list
+// before hashing.
+type GitTree struct {
+	Include []string
+	Exclude []string
+}
 
 // Type implements Hasher.
 func (GitTree) Type() string { return config.HashGitTree }
 
 // Hash implements Hasher.
-func (GitTree) Hash(repo *gitutil.Repo) (string, error) {
+func (g GitTree) Hash(repo *gitutil.Repo) (string, error) {
 	head, err := repo.HeadSHA()
 	if err != nil {
 		return "", err
@@ -71,6 +76,10 @@ func (GitTree) Hash(repo *gitutil.Repo) (string, error) {
 		return "", err
 	}
 	files := dedupSort(append(diffs, untracked...))
+	files, err = filterGlobs(files, g.Include, g.Exclude)
+	if err != nil {
+		return "", err
+	}
 
 	h := sha256.New()
 	fmt.Fprintf(h, "head\x00%s\x00", head)

@@ -21,14 +21,16 @@ func newRunCmd() *cobra.Command {
 			"  markgate verify [key] || ( <cmd> && markgate set [key] )\n\n" +
 			"If [key] is omitted, the default key is used. Arguments after `--`\n" +
 			"are executed verbatim (no shell interpretation).",
-		DisableFlagParsing: false,
-		Args:               cobra.MinimumNArgs(1),
-		RunE:               runE,
+		Args: cobra.MinimumNArgs(1),
+	}
+	overrides := addGateFlags(cmd)
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		return runE(cmd, args, overrides)
 	}
 	return cmd
 }
 
-func runE(cmd *cobra.Command, args []string) error {
+func runE(cmd *cobra.Command, args []string, overrides *gateFlagValues) error {
 	dash := cmd.ArgsLenAtDash()
 	if dash < 0 {
 		return &ExitError{Code: 2, Err: errors.New("run: '--' separator before the command is required")}
@@ -45,7 +47,7 @@ func runE(cmd *cobra.Command, args []string) error {
 		return &ExitError{Code: 2, Err: errors.New("run: a command after '--' is required")}
 	}
 
-	c, err := newGateCtx(keyArg)
+	c, err := newGateCtx(keyArg, overrides)
 	if err != nil {
 		return err
 	}

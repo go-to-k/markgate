@@ -191,6 +191,7 @@ markgate verify [key]              Exit 0 match, 1 mismatch, 2 error.
 markgate status [key]              Show marker + match status.
 markgate clear  [key]              Delete the marker (idempotent).
 markgate run    [key] -- <cmd>...  Sugar for verify + <cmd> + set.
+markgate init                      Write a starter .markgate.yml.
 markgate version                   Print the version.
 ```
 
@@ -198,31 +199,61 @@ markgate version                   Print the version.
   independent gates in the same repo (`pre-commit`, `pre-pr`, ...).
 - Keys must match `[a-z0-9][a-z0-9-]*` (kebab-case, ASCII).
 
+### Per-invocation overrides
+
+`set` / `verify` / `status` / `clear` / `run` each accept these flags so
+you don't have to write a `.markgate.yml` for one-off scopes:
+
+```text
+--hash git-tree|files    Override hash type for this call.
+--include <glob>         Repeatable. Override the gate's include list.
+--exclude <glob>         Repeatable. Override the gate's exclude list.
+```
+
+Example — exclude `vendor/` without any config file:
+
+```sh
+markgate run --exclude 'vendor/**' -- make check
+```
+
 ## Hash types
 
 - **`git-tree`** (default, zero config): `HEAD` + diff-vs-HEAD ∪
   untracked-not-ignored. Deletion-aware. Staging-agnostic. Commits
-  automatically invalidate the marker.
+  automatically invalidate the marker. Optional `include` / `exclude`
+  globs narrow the scope without removing HEAD-aware invalidation — use
+  this to skip `vendor/**`, `node_modules/**`, or other large
+  directories that don't affect your check.
 - **`files`**: explicit include/exclude globs (`**` supported).
-  `HEAD` is intentionally not part of the hash, so commits outside the
-  configured paths don't invalidate. Use this for narrow-scope gates
-  (docs, Docker, coverage, ...).
+  **`HEAD` is intentionally not part of the hash**, so commits that
+  don't touch the configured paths don't invalidate the marker. Use this
+  for narrow-scope gates where commits elsewhere should *not* force a
+  re-run (docs, Dockerfile, coverage, ...).
+
+Rule of thumb: start with `git-tree` (add `exclude` if needed). Reach
+for `files` only when you specifically want "ignore commits that don't
+touch these paths" semantics.
 
 ## `.markgate.yml` (optional)
 
-Only needed when you want multiple gates or the `files` hash. Looked up
-at `$(git rev-parse --show-toplevel)/.markgate.yml` (no parent-dir
-walking).
+Only needed for multiple gates, or for `files` hash, or to persist
+include/exclude for the default `git-tree`. Looked up at
+`$(git rev-parse --show-toplevel)/.markgate.yml` (no parent-dir
+walking). Use `markgate init` to drop a starter file:
 
 ```yaml
 gates:
-  pre-commit:
+  default:
     hash: git-tree
+    exclude:
+      - "vendor/**"
+      - "node_modules/**"
 
   pre-pr:
     hash: files
     include:
       - "docs/**"
+      - "README.md"
     exclude:
       - "**/*.txt"
 ```

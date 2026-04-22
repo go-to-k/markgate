@@ -65,7 +65,8 @@ func (c *Config) validate() error {
 		}
 		switch g.Hash {
 		case "", HashGitTree:
-			// git-tree ignores include/exclude; allow but don't enforce emptiness.
+			// git-tree accepts optional include/exclude for narrowing the
+			// hash target while keeping HEAD-aware invalidation.
 		case HashFiles:
 			if len(g.Include) == 0 {
 				return fmt.Errorf("gates.%s: hash=files requires a non-empty include list", k)

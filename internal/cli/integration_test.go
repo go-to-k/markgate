@@ -254,6 +254,108 @@ func TestRun_TooManyKeys(t *testing.T) {
 	}
 }
 
+func TestExcludeFlag_OnGitTree(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "vendor/lib.go", "lib")
+
+	if code, _ := runCmd(t, "set", "--exclude", "vendor/**"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	// Edit inside excluded path: verify still matches.
+	writeRepoFile(t, dir, "vendor/lib.go", "lib edited")
+	if code, _ := runCmd(t, "verify", "--exclude", "vendor/**"); code != 0 {
+		t.Errorf("verify after vendor edit: %d, want 0 (excluded)", code)
+	}
+	// Edit outside excluded path: verify fails.
+	writeRepoFile(t, dir, "seed.txt", "touched")
+	if code, _ := runCmd(t, "verify", "--exclude", "vendor/**"); code != 1 {
+		t.Errorf("verify after seed edit: %d, want 1 (not excluded)", code)
+	}
+}
+
+func TestIncludeFlag_OnGitTree(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+
+	if code, _ := runCmd(t, "set", "--include", "src/**"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	// Edit outside include: verify still matches.
+	writeRepoFile(t, dir, "seed.txt", "touched")
+	if code, _ := runCmd(t, "verify", "--include", "src/**"); code != 0 {
+		t.Errorf("verify after out-of-scope edit: %d, want 0", code)
+	}
+	// Edit inside include: verify fails.
+	writeRepoFile(t, dir, "src/a.go", "a edited")
+	if code, _ := runCmd(t, "verify", "--include", "src/**"); code != 1 {
+		t.Errorf("verify after in-scope edit: %d, want 1", code)
+	}
+}
+
+func TestHashFlag_SwitchesToFiles(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+
+	if code, _ := runCmd(t, "set", "--hash", "files", "--include", "src/**"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	// Commit a new file *outside* include: files hash ignores HEAD so
+	// verify still matches.
+	writeRepoFile(t, dir, "docs/x.md", "x")
+	// (don't actually commit; just touching an out-of-scope file is enough)
+	if code, _ := runCmd(t, "verify", "--hash", "files", "--include", "src/**"); code != 0 {
+		t.Errorf("verify after out-of-scope change: %d, want 0 (files hash)", code)
+	}
+}
+
+func TestHashFlag_FilesRequiresInclude(t *testing.T) {
+	initRepo(t)
+	if code, _ := runCmd(t, "set", "--hash", "files"); code != 2 {
+		t.Errorf("hash=files without include: %d, want 2", code)
+	}
+}
+
+func TestHashFlag_Unknown(t *testing.T) {
+	initRepo(t)
+	if code, _ := runCmd(t, "set", "--hash", "bogus"); code != 2 {
+		t.Errorf("unknown hash: %d, want 2", code)
+	}
+}
+
+func TestInit_Generates(t *testing.T) {
+	dir := initRepo(t)
+	if code, _ := runCmd(t, "init"); code != 0 {
+		t.Fatalf("init: %d", code)
+	}
+	p := filepath.Join(dir, ".markgate.yml")
+	info, err := os.Stat(p)
+	if err != nil {
+		t.Fatalf("expected .markgate.yml to exist: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Error("generated .markgate.yml is empty")
+	}
+}
+
+func TestInit_ExistingBlocks(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml", "pre-existing\n")
+	if code, _ := runCmd(t, "init"); code != 2 {
+		t.Errorf("init over existing: %d, want 2", code)
+	}
+	if code, _ := runCmd(t, "init", "--force"); code != 0 {
+		t.Errorf("init --force: %d, want 0", code)
+	}
+	// After --force, content should match the skeleton (first line includes the header comment).
+	body, err := os.ReadFile(filepath.Join(dir, ".markgate.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(body, []byte("markgate configuration")) {
+		t.Errorf("init --force did not overwrite with skeleton, got:\n%s", body)
+	}
+}
+
 func TestVersion_PrintsInjected(t *testing.T) {
 	root := newRootCmd("v1.2.3")
 	var stdout bytes.Buffer

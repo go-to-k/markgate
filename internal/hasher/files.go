@@ -92,11 +92,43 @@ func matchesAny(patterns []string, path string) (bool, error) {
 	for _, pat := range patterns {
 		ok, err := doublestar.Match(pat, path)
 		if err != nil {
-			return false, fmt.Errorf("exclude glob %q: %w", pat, err)
+			return false, fmt.Errorf("invalid glob %q: %w", pat, err)
 		}
 		if ok {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// filterGlobs applies optional Include/Exclude scoping to a file list.
+// Include empty means "match all"; Exclude removes matching entries.
+// When both are empty the input is returned unchanged.
+func filterGlobs(paths, include, exclude []string) ([]string, error) {
+	if len(include) == 0 && len(exclude) == 0 {
+		return paths, nil
+	}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if len(include) > 0 {
+			ok, err := matchesAny(include, p)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+		}
+		if len(exclude) > 0 {
+			ok, err := matchesAny(exclude, p)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				continue
+			}
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
