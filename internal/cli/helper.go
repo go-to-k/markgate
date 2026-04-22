@@ -14,9 +14,9 @@ import (
 	"github.com/go-to-k/markgate/internal/state"
 )
 
-// EnvStateDir overrides the directory that stores marker files. CLI
-// flag --state-dir takes precedence over this env var, and both override
-// the default (<git-dir>/markgate).
+// EnvStateDir overrides the directory that stores marker files.
+// Precedence: --state-dir flag > this env > gate.StateDir in
+// .markgate.yml > default (<git-dir>/markgate).
 const EnvStateDir = "MARKGATE_STATE_DIR"
 
 // DefaultKey is the key used when the user omits the positional argument.
@@ -51,7 +51,7 @@ func addGateFlags(cmd *cobra.Command) *gateFlagValues {
 	cmd.Flags().StringArrayVar(&v.exclude, "exclude", nil,
 		"glob to exclude (repeatable); overrides config exclude list")
 	cmd.Flags().StringVar(&v.stateDir, "state-dir", "",
-		"directory to store marker files; overrides "+EnvStateDir+" (default: <git-dir>/markgate)")
+		"directory to store marker files; overrides "+EnvStateDir+" env and state_dir: in .markgate.yml (default: <git-dir>/markgate)")
 	return v
 }
 

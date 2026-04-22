@@ -41,10 +41,11 @@ func Path(gitDir, key string) string {
 }
 
 // PathIn returns the marker file path directly under dir, without the
-// extra "markgate" subdirectory that Path adds. Callers use this when the
-// user has explicitly chosen a storage directory (e.g. --state-dir or
-// MARKGATE_STATE_DIR): the directory is already theirs, so there is no
-// reason to nest another folder inside it.
+// extra "markgate" subdirectory that Path adds. Callers use this when
+// the user has explicitly chosen a storage directory (via --state-dir,
+// MARKGATE_STATE_DIR, or state_dir: in .markgate.yml): the directory
+// is already theirs, so there is no reason to nest another folder
+// inside it.
 func PathIn(dir, key string) string {
 	return filepath.Join(dir, key+".json")
 }
