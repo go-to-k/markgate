@@ -19,22 +19,20 @@ without a fresh check get blocked, and duplicate runs exit instantly.
 ## 20-second tour
 
 ```sh
-# First run — no marker yet, so `pnpm test` runs and the marker is saved.
+# First run — nothing cached yet, so `pnpm test` runs and the pass is cached.
 $ markgate run -- pnpm test
 tests passed in 4.2s
 
 # Second run — nothing changed since the last success: instant skip.
 $ markgate run -- pnpm test
 
-# After you edit a file — marker is stale, `pnpm test` runs again.
+# After you edit a file — cache is stale, `pnpm test` runs again.
 $ echo '// fix typo' >> src/foo.go
 $ markgate run -- pnpm test
 tests passed in 4.1s
 ```
 
-Zero config. No key argument needed. That is the intended daily usage.
-(`pnpm test` is a placeholder — substitute your project's verification
-command.)
+Zero config. That is the intended daily usage.
 
 Under the hood, when a check passes, `markgate` writes a small JSON
 **marker** recording the current repo state. The next hook run exits
