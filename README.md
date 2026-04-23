@@ -53,8 +53,8 @@ Pick by where your hook sits relative to the check.
 
 ```sh
 markgate run -- pnpm test
-# Pass: marker cached, later calls skip instantly.
-# Fail: marker unchanged, next call re-runs the check.
+# pnpm test passes → marker cached, later calls skip instantly.
+# pnpm test fails  → marker unchanged, next call re-runs it.
 ```
 
 In Claude Code's JSON hook config:
