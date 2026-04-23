@@ -41,15 +41,16 @@ moved.
 
 Pick by where your hook sits relative to the check.
 
-**`markgate run -- <cmd>`** — one-shot. Use where the hook runs the
-check itself — husky, lefthook, pre-commit framework, bare
-`pre-commit`, or Claude Code PreToolUse. Just prefix your check
-command with `markgate run --`.
+**`markgate run -- <cmd>`** — one-shot. Prefix your check command
+with `markgate run --` wherever it runs — the hook (husky,
+lefthook, pre-commit framework, bare `pre-commit`, or Claude Code
+PreToolUse), a manual dev invocation, a CI job. All sites share
+the cache, so whichever runs first fills it and the rest skip.
 
 ```sh
-# .husky/pre-commit (or lefthook.yml, .pre-commit-hooks.yaml, ...):
+# Example — .husky/pre-commit (or lefthook.yml, .pre-commit-hooks.yaml, ...):
 markgate run -- pnpm test
-# First hook: pnpm test runs. Next hook with no changes: instant skip.
+# First invocation caches the pass; later invocations with no changes: instant skip.
 ```
 
 Or in Claude Code — same behavior:
