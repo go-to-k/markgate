@@ -235,7 +235,7 @@ Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
 ## Drop into your hook manager
 
 Substitute `pnpm test` with your verification command. When the
-hook can wrap the check, use `run`; when it sits *in front of* a
+hook runs the check itself, use `run`; when it sits *in front of* a
 separate command, use `verify` and pair it with `set` in the check
 itself (see [Two shapes](#two-shapes-run-vs-set--verify)).
 
@@ -285,7 +285,7 @@ repos:
 }
 ```
 
-In your check skill: `pnpm test && markgate set`. See
+In your `/check` skill: `pnpm test && markgate set`. See
 [Use case 1](#1-pre-commit-skip-duplicates-catch-forgotten-checks) for the full flow.
 
 ## Command model
@@ -309,7 +309,7 @@ lint, build, tests) that don't fit into a single `<cmd>`:
 
 ```sh
 # Wherever the check runs — record state on success:
-typecheck && lint && build && test && markgate set
+pnpm test && markgate set
 
 # Wherever the gate runs — short-circuit on a fresh marker, else re-run:
 markgate verify || pnpm test
