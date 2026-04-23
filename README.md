@@ -12,10 +12,9 @@ hooks can:
 **Especially useful in the AI-coding-agent era.** You tell your
 agent to run the check; sometimes it forgets (context loss, tokens,
 speed pressure) and commits anyway. You add a pre-commit hook to
-enforce it; now the check runs redundantly every commit — agent,
-hook, `gh pr create`, CI, four passes, one state. `markgate` breaks
-this dilemma: commits without a fresh check get blocked, and
-duplicate runs exit instantly.
+enforce it; now every commit runs the check twice — once by the
+agent, once by the hook. `markgate` breaks this dilemma: commits
+without a fresh check get blocked, and duplicate runs exit instantly.
 
 ## 20-second tour
 
