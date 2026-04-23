@@ -1,8 +1,8 @@
 # markgate
 
-`markgate` is a verification-state cache for hook managers (Claude
-Code hooks, husky, lefthook, pre-commit, bare `.git/hooks/*`). Your
-hooks can:
+`markgate` is a zero-config verification-state cache for hook
+managers (Claude Code hooks, husky, lefthook, pre-commit, bare
+`.git/hooks/*`). Your hooks can:
 
 - **Skip the checks that already passed** — instant exit when the
   repo state hasn't changed since the last successful run.
@@ -31,8 +31,6 @@ $ echo '// fix typo' >> src/foo.go
 $ markgate run -- pnpm test
 tests passed in 4.1s
 ```
-
-Zero config. That is the intended daily usage.
 
 Under the hood, when a check passes, `markgate` writes a small JSON
 **marker** recording the current repo state. The next hook run exits
