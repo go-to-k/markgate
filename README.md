@@ -52,7 +52,7 @@ markgate run -- pnpm test
 # First invocation caches the pass; later invocations with no changes skip.
 ```
 
-Or in Claude Code — same behavior:
+In Claude Code's JSON hook config:
 
 ```json
 // .claude/settings.json
