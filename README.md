@@ -4,22 +4,12 @@
 > changed since the last time they passed.
 
 `markgate` is a verification-state cache for hook managers (Claude
-Code hooks, husky, lefthook, pre-commit, bare `.git/hooks/*`). It
-records that a check passed at the current repo state so the next hook
-can skip re-running it.
-
-**Especially useful in the AI-coding-agent era.** Two patterns hit
-hard when Claude Code / Cursor / Codex / Copilot CLI is the one
-running checks:
-
-- **Redundancy** — the agent runs your `/check`, then the commit
-  hook runs it, then `gh pr create` runs it, then CI runs it.
-  `markgate` exits in milliseconds on every pass after the first.
-- **Skipped steps** — the agent may quietly skip the check it
-  promised to run (context loss, tool timeout, speed pressure).
-  Pair `markgate verify` with your pre-commit / PreToolUse hook and
-  the commit blocks until the check actually ran against the current
-  state. **No marker, no commit.**
+Code hooks, husky, lefthook, pre-commit, bare `.git/hooks/*`). When a
+check passes, it writes a small JSON **marker** recording the current
+repo state. On the next hook run, if the state hasn't moved, the
+check skips in milliseconds — if it has, the check runs again.
+Especially useful in AI-agent-driven workflows, where the same check
+runs redundantly or gets quietly skipped.
 
 ## 20-second tour
 
@@ -43,9 +33,24 @@ Zero config. No key argument needed. That is the intended daily usage.
 (`make check` is a placeholder — substitute your project's verification
 command.)
 
+## Two shapes: `run` vs `set` + `verify`
+
+Pick by where your hook sits relative to the check:
+
+- **`markgate run -- <cmd>`** — one-shot. Use when the hook can wrap
+  the check directly (husky, lefthook, pre-commit framework, bare
+  `pre-commit`).
+- **`markgate set` + `markgate verify`** — split. Use when the check
+  and the gate live in different places (Claude Code PreToolUse,
+  multi-step pipelines, commit-then-push flows). The check calls
+  `set` on success; the gate calls `verify` to short-circuit.
+
+Full semantics and exit codes are in [Command model](#command-model).
+Both shapes appear throughout the use cases below.
+
 ## Why markgate?
 
-Two failure modes in an agent-driven workflow, one cache layer.
+Two failure modes in an AI-agent-driven workflow, one cache layer.
 
 **Redundant re-runs.** Your agent (or you) just ran `make check`.
 The commit hook runs it again. `gh pr create` runs it again. CI
@@ -60,19 +65,8 @@ call silently failed. Or it simply forgot. Wire `markgate verify`
 into your pre-commit or PreToolUse hook and there's no bypass by
 "forgetting" — a fresh marker exists only after a check actually
 passed against the current state. Exit 1 with "no marker" is a
-loud, debuggable failure; a silent skip is not.
-
-Concrete gates you can build (see [Use cases](#use-cases) for full
-configs):
-
-- **Pre-commit: skip duplicate checks** — skip lint / test / build when
-  nothing changed since the last `/check`.
-- **Pre-PR: docs consistency** — re-verify docs only when `docs/**` or
-  `README.md` actually changed. Code-only commits are free.
-- **Pre-image-push: vulnerability scan freshness** — re-run `trivy`
-  only when `Dockerfile` or lockfiles changed.
-- **Pre-push: coverage report freshness** — re-run the test suite only
-  when `src/**` or `tests/**` changed.
+loud, debuggable failure; a silent skip is not. **No marker, no
+commit.**
 
 Existing hook managers (husky / lefthook / pre-commit / Claude Code
 hooks) are great at *running* checks. None of them remember that a
@@ -81,209 +75,6 @@ that memory layer — exit 0 = "verified, skip", exit 1 = "stale or
 absent, run it". It's not a hook manager itself; it slots into
 whatever hook manager you already use — one line to adopt, one line
 to remove.
-
-## Usage
-
-### `markgate run -- <cmd>` (main)
-
-`markgate run -- <cmd>` is the idiomatic form. It collapses the common
-verify → run → set cycle into one invocation:
-
-1. **verify** — if the marker matches, `<cmd>` is not executed; exit 0
-   immediately.
-2. Otherwise **execute `<cmd>`**. stdio is passed through;
-   `SIGINT` / `SIGTERM` are forwarded to the child.
-3. On success, **set** the marker. On failure, the marker is **not**
-   updated and `<cmd>`'s exit code is returned as-is.
-
-```sh
-markgate run -- make check
-```
-
-Most hook setups only need this one command.
-
-### `markgate set` / `markgate verify` (building blocks)
-
-Reach for the two halves directly when `run` doesn't fit:
-
-- **Multi-step check pipelines** — `run -- <cmd>` wraps a single
-  command. If your check is several steps (typecheck, lint, build,
-  tests) spread across a script or skill, run them normally and call
-  `markgate set` once at the end, after all pass.
-- **Check and gate in different places** — e.g. a Claude Code skill
-  runs the check and records the marker, while a PreToolUse hook on
-  `git commit*` only calls `markgate verify` to gate.
-
-```sh
-# Wherever the check runs — record state on success:
-typecheck && lint && build && test && markgate set
-
-# Wherever the gate runs — short-circuit on a fresh marker, else re-run:
-markgate verify || make check
-```
-
-Exit codes follow the `grep` / `diff` convention, so `||` composes
-naturally:
-
-| exit | meaning                                                   |
-| ---- | --------------------------------------------------------- |
-| 0    | verified — state matches the marker, safe to skip         |
-| 1    | not verified — no marker, or state differs                |
-| 2    | error — not in a repo, bad config, bad key, etc.          |
-
-## Drop into your hook
-
-If the hook can wrap your check command, use `markgate run -- <cmd>`
-(husky / lefthook / pre-commit). If the hook only sits *in front of*
-the command (Claude Code PreToolUse, bare `.git/hooks/*`), use
-`markgate verify` (exit 0 = skip, exit 1 = re-run) and pair it with
-`markgate set` in the check command itself.
-
-### Claude Code (PreToolUse hook)
-
-`.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "if": "Bash(git commit*)",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "markgate verify"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-In your check skill:
-
-```sh
-make check && markgate set
-```
-
-See [Use cases § Pre-commit](#1-pre-commit-skip-duplicate-checks) for
-the full flow.
-
-### husky
-
-`.husky/pre-commit`:
-
-```sh
-markgate run -- make check
-```
-
-### lefthook
-
-`lefthook.yml`:
-
-```yaml
-pre-commit:
-  commands:
-    check:
-      run: markgate run -- make check
-```
-
-### pre-commit framework
-
-`.pre-commit-hooks.yaml`:
-
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: markgate-check
-        name: markgate check
-        entry: markgate run -- make check
-        language: system
-        pass_filenames: false
-```
-
-### Bare `.git/hooks/pre-commit`
-
-```sh
-#!/bin/sh
-markgate verify || {
-  echo "Run your check command first, then commit." >&2
-  exit 1
-}
-```
-
-## Install
-
-### Homebrew (macOS / Linux)
-
-```sh
-brew install go-to-k/tap/markgate
-```
-
-### Shell script (macOS / Linux / Windows with Git Bash)
-
-```sh
-# Latest
-curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash
-
-# Pin a version
-curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash -s -- v0.1.0
-```
-
-### `go install`
-
-```sh
-go install github.com/go-to-k/markgate/cmd/markgate@latest
-```
-
-### Prebuilt binaries
-
-Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
-[GitHub Releases](https://github.com/go-to-k/markgate/releases).
-
-## Core concepts
-
-### Key (optional)
-
-Every marker is keyed. You only need to think about keys when you run
-**multiple independent gates** in the same repo (e.g. both `pre-commit`
-and `pre-pr`). Omitted key = `default`, which covers the single-gate
-case.
-
-```sh
-markgate set               # same as `markgate set default`
-markgate set pre-pr        # a second, independent gate
-```
-
-Keys must match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII).
-
-### Hashing strategy: `git-tree` vs `files`
-
-`markgate` ships two hashing strategies:
-
-| | `git-tree` (default) | `files` |
-|---|---|---|
-| What it hashes | `HEAD` + diff-vs-HEAD ∪ untracked-not-ignored | whatever matches your `include` globs |
-| `HEAD` in the hash? | **Yes** | **No** |
-| Commits invalidate the marker? | Yes | Only if they touch in-scope files |
-| `.gitignore` respected? | Yes (automatic) | No — scope is explicit |
-| Needs config? | No | Yes (`include` required) |
-
-They serve different purposes:
-
-- **`git-tree`** = "re-verify on *any* repo change". Broad gates
-  (pre-commit running lint/test/build). Add `exclude` patterns to skip
-  `vendor/`, `node_modules/`, etc. — HEAD-aware invalidation is kept.
-- **`files`** = "re-verify *only* when these paths change, ignore other
-  commits". Narrow gates (docs consistency, vuln scan rooted on a
-  lockfile, coverage for one sub-tree).
-
-Rule of thumb: start with `git-tree` (add `exclude` if needed). Reach
-for `files` only when you specifically want the "ignore commits that
-don't touch these paths" semantics.
 
 ## Use cases
 
@@ -379,6 +170,270 @@ go test -cover && markgate set pre-push
 
 # In .git/hooks/pre-push:
 markgate verify pre-push || exit 1
+```
+
+## Install
+
+### Homebrew (macOS / Linux)
+
+```sh
+brew install go-to-k/tap/markgate
+```
+
+### Shell script (macOS / Linux / Windows with Git Bash)
+
+```sh
+# Latest
+curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash
+
+# Pin a version
+curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash -s -- v0.1.0
+```
+
+### `go install`
+
+```sh
+go install github.com/go-to-k/markgate/cmd/markgate@latest
+```
+
+### Prebuilt binaries
+
+Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
+[GitHub Releases](https://github.com/go-to-k/markgate/releases).
+
+## Drop into your hook manager
+
+Substitute `make check` with your verification command. When the
+hook can wrap the check, use `run`; when it sits *in front of* a
+separate command, use `verify` and pair it with `set` in the check
+itself (see [Two shapes](#two-shapes-run-vs-set--verify)).
+
+**husky** — `.husky/pre-commit`:
+
+```sh
+markgate run -- make check
+```
+
+**lefthook** — `lefthook.yml`:
+
+```yaml
+pre-commit:
+  commands:
+    check:
+      run: markgate run -- make check
+```
+
+**pre-commit framework** — `.pre-commit-hooks.yaml`:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: markgate-check
+        name: markgate check
+        entry: markgate run -- make check
+        language: system
+        pass_filenames: false
+```
+
+**Bare `.git/hooks/pre-commit`**:
+
+```sh
+#!/bin/sh
+markgate verify || {
+  echo "Run your check command first, then commit." >&2
+  exit 1
+}
+```
+
+**Claude Code (PreToolUse)** — `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git commit*)",
+        "hooks": [
+          { "type": "command", "command": "markgate verify" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+In your check skill: `make check && markgate set`. See
+[Use case 1](#1-pre-commit-skip-duplicate-checks) for the full flow.
+
+## Command model
+
+### `markgate run -- <cmd>` (one-shot)
+
+Collapses verify → run → set into one invocation:
+
+1. **verify** — if the marker matches, `<cmd>` is not executed; exit 0
+   immediately.
+2. Otherwise **execute `<cmd>`**. stdio is passed through;
+   `SIGINT` / `SIGTERM` are forwarded to the child.
+3. On success, **set** the marker. On failure, the marker is **not**
+   updated and `<cmd>`'s exit code is returned as-is.
+
+### `markgate set` / `markgate verify` (split)
+
+Reach for these two halves when the check and the gate run in
+different places, or when the check is several steps (typecheck,
+lint, build, tests) that don't fit into a single `<cmd>`:
+
+```sh
+# Wherever the check runs — record state on success:
+typecheck && lint && build && test && markgate set
+
+# Wherever the gate runs — short-circuit on a fresh marker, else re-run:
+markgate verify || make check
+```
+
+### Exit codes
+
+Exit codes follow the `grep` / `diff` convention, so `||` composes
+naturally:
+
+| exit | meaning                                                   |
+| ---- | --------------------------------------------------------- |
+| 0    | verified — state matches the marker, safe to skip         |
+| 1    | not verified — no marker, or state differs                |
+| 2    | error — not in a repo, bad config, bad key, etc.          |
+
+## Core concepts
+
+### Key (optional)
+
+Every marker is keyed. You only need to think about keys when you run
+**multiple independent gates** in the same repo (e.g. both `pre-commit`
+and `pre-pr`). Omitted key = `default`, which covers the single-gate
+case.
+
+```sh
+markgate set               # same as `markgate set default`
+markgate set pre-pr        # a second, independent gate
+```
+
+Keys must match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII).
+
+### Hashing strategy: `git-tree` vs `files`
+
+`markgate` ships two hashing strategies:
+
+| | `git-tree` (default) | `files` |
+|---|---|---|
+| What it hashes | `HEAD` + diff-vs-HEAD ∪ untracked-not-ignored | whatever matches your `include` globs |
+| `HEAD` in the hash? | **Yes** | **No** |
+| Commits invalidate the marker? | Yes | Only if they touch in-scope files |
+| `.gitignore` respected? | Yes (automatic) | No — scope is explicit |
+| Needs config? | No | Yes (`include` required) |
+
+They serve different purposes:
+
+- **`git-tree`** = "re-verify on *any* repo change". Broad gates
+  (pre-commit running lint/test/build). Add `exclude` patterns to skip
+  `vendor/`, `node_modules/`, etc. — HEAD-aware invalidation is kept.
+- **`files`** = "re-verify *only* when these paths change, ignore other
+  commits". Narrow gates (docs consistency, vuln scan rooted on a
+  lockfile, coverage for one sub-tree).
+
+Rule of thumb: start with `git-tree` (add `exclude` if needed). Reach
+for `files` only when you specifically want the "ignore commits that
+don't touch these paths" semantics.
+
+## CLI reference
+
+```text
+markgate set    [key]              Record the current state hash.
+markgate verify [key]              Exit 0 match, 1 mismatch, 2 error.
+markgate status [key]              Show marker + match status.
+markgate clear  [key]              Delete the marker (idempotent).
+markgate run    [key] -- <cmd>...  Sugar for verify + <cmd> + set.
+markgate init                      Write a starter .markgate.yml.
+markgate version                   Print the version.
+```
+
+### Per-invocation overrides
+
+`set` / `verify` / `status` / `clear` / `run` each accept these flags,
+so one-off scopes don't need a `.markgate.yml`:
+
+```text
+--hash git-tree|files    Override hash type for this call.
+--include <glob>         Repeatable. Override the gate's include list.
+--exclude <glob>         Repeatable. Override the gate's exclude list.
+--state-dir <path>       Directory to store marker files. Takes
+                         precedence over MARKGATE_STATE_DIR env and
+                         state_dir: in .markgate.yml. Default:
+                         <git-dir>/markgate. See "Sharing markers".
+```
+
+Flag syntax is identical across hash types. With `--hash files`,
+`--include` is required. Example — exclude `vendor/` without any
+config file:
+
+```sh
+markgate run --exclude 'vendor/**' -- make check
+```
+
+### Environment variables
+
+```text
+MARKGATE_STATE_DIR       Marker storage directory. Same effect as
+                         --state-dir and state_dir: in config.
+                         Precedence: --state-dir > this env >
+                         state_dir: in .markgate.yml > default.
+```
+
+## `.markgate.yml` (optional)
+
+Only needed for multiple gates, or for `files` hash, or to persist
+include / exclude / state_dir. Looked up at
+`$(git rev-parse --show-toplevel)/.markgate.yml` (no parent-dir
+walking).
+
+Per-gate fields:
+
+| field | purpose |
+|---|---|
+| `hash` | `git-tree` (default) or `files` |
+| `include` | glob list; required for `hash: files` |
+| `exclude` | glob list |
+| `state_dir` | marker storage directory (override per gate). Prefer a **relative** path — it resolves against the repo top-level so it's identical on every machine. An absolute path committed here will point to nonexistent locations on other machines. CLI flag and `MARKGATE_STATE_DIR` still take precedence. |
+
+### Generate a starter — `markgate init`
+
+```sh
+markgate init          # writes .markgate.yml at the repo root
+markgate init --force  # overwrite an existing one
+```
+
+The generated file enables the default `git-tree` gate with
+commented-out examples (an `exclude` list on `git-tree`, plus a
+`files`-type gate) — uncomment what you need.
+
+### Full example
+
+```yaml
+gates:
+  default:
+    hash: git-tree
+    exclude:
+      - "vendor/**"
+      - "node_modules/**"
+
+  pre-pr:
+    hash: files
+    include:
+      - "docs/**"
+      - "README.md"
+    exclude:
+      - "**/*.txt"
 ```
 
 ## Sharing markers across machines (CI / teammates)
@@ -575,96 +630,6 @@ markers where commit-access already implies trust in the signal.
 - **Signing is not yet implemented** — markers are unsigned JSON.
   Tamper resistance depends on who can write to the directory (cache /
   repo).
-
-## CLI reference
-
-```text
-markgate set    [key]              Record the current state hash.
-markgate verify [key]              Exit 0 match, 1 mismatch, 2 error.
-markgate status [key]              Show marker + match status.
-markgate clear  [key]              Delete the marker (idempotent).
-markgate run    [key] -- <cmd>...  Sugar for verify + <cmd> + set.
-markgate init                      Write a starter .markgate.yml.
-markgate version                   Print the version.
-```
-
-### Per-invocation overrides
-
-`set` / `verify` / `status` / `clear` / `run` each accept these flags,
-so one-off scopes don't need a `.markgate.yml`:
-
-```text
---hash git-tree|files    Override hash type for this call.
---include <glob>         Repeatable. Override the gate's include list.
---exclude <glob>         Repeatable. Override the gate's exclude list.
---state-dir <path>       Directory to store marker files. Takes
-                         precedence over MARKGATE_STATE_DIR env and
-                         state_dir: in .markgate.yml. Default:
-                         <git-dir>/markgate. See "Sharing markers".
-```
-
-Flag syntax is identical across hash types. With `--hash files`,
-`--include` is required. Example — exclude `vendor/` without any
-config file:
-
-```sh
-markgate run --exclude 'vendor/**' -- make check
-```
-
-### Environment variables
-
-```text
-MARKGATE_STATE_DIR       Marker storage directory. Same effect as
-                         --state-dir and state_dir: in config.
-                         Precedence: --state-dir > this env >
-                         state_dir: in .markgate.yml > default.
-```
-
-## `.markgate.yml` (optional)
-
-Only needed for multiple gates, or for `files` hash, or to persist
-include / exclude / state_dir. Looked up at
-`$(git rev-parse --show-toplevel)/.markgate.yml` (no parent-dir
-walking).
-
-Per-gate fields:
-
-| field | purpose |
-|---|---|
-| `hash` | `git-tree` (default) or `files` |
-| `include` | glob list; required for `hash: files` |
-| `exclude` | glob list |
-| `state_dir` | marker storage directory (override per gate). Prefer a **relative** path — it resolves against the repo top-level so it's identical on every machine. An absolute path committed here will point to nonexistent locations on other machines. CLI flag and `MARKGATE_STATE_DIR` still take precedence. |
-
-### Generate a starter — `markgate init`
-
-```sh
-markgate init          # writes .markgate.yml at the repo root
-markgate init --force  # overwrite an existing one
-```
-
-The generated file enables the default `git-tree` gate with
-commented-out examples (an `exclude` list on `git-tree`, plus a
-`files`-type gate) — uncomment what you need.
-
-### Full example
-
-```yaml
-gates:
-  default:
-    hash: git-tree
-    exclude:
-      - "vendor/**"
-      - "node_modules/**"
-
-  pre-pr:
-    hash: files
-    include:
-      - "docs/**"
-      - "README.md"
-    exclude:
-      - "**/*.txt"
-```
 
 ## Marker storage
 
