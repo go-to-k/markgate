@@ -41,18 +41,23 @@ moved.
 
 Pick by where your hook sits relative to the check.
 
-**`markgate run -- <cmd>`** — one-shot. Use where the hook runs the
-check itself — husky, lefthook, pre-commit framework, bare
-`pre-commit`, or Claude Code PreToolUse. Just prefix your check
-command with `markgate run --`.
+**`markgate run -- <cmd>`** — one-shot.
+
+- **When**: the hook itself runs the check. Simplest for
+  single-command checks.
+- **AI forget**: the hook runs the check before the commit (a
+  safety net — commit proceeds if the check passes).
+- **How**: prefix your check — `pnpm test` → `markgate run -- pnpm test`.
+- **Behavior**: first call runs and caches on pass; later calls
+  with unchanged state skip; a failed check doesn't cache.
 
 ```sh
-# .husky/pre-commit (or lefthook.yml, .pre-commit-hooks.yaml, ...):
 markgate run -- pnpm test
-# First hook: pnpm test runs. Next hook with no changes: instant skip.
+# pnpm test passes → marker cached, later calls skip instantly.
+# pnpm test fails  → marker unchanged, next call re-runs it.
 ```
 
-Or in Claude Code — same behavior:
+In Claude Code's JSON hook config:
 
 ```json
 // .claude/settings.json
@@ -71,19 +76,26 @@ Or in Claude Code — same behavior:
 }
 ```
 
-**`markgate set` + `markgate verify`** — split. Use when the check
-and the gate live in different places. Concrete scenarios:
+**`markgate set` + `markgate verify`** — split.
+
+- **When**: the hook only verifies. Check runs elsewhere (skill /
+  script / CI), ending with `markgate set`.
+- **Why**: check command lives in one place — the hook doesn't
+  duplicate it.
+- **AI forget**: the commit is blocked loudly — no auto-fallback,
+  agent must re-run.
+
+Concrete scenarios:
 
 - **Explicit check + commit gate** — canonical in Claude Code: the
   `/check` skill runs the check and calls `markgate set`; a
   PreToolUse hook on `git commit` calls `markgate verify` to block
-  un-verified commits. Splitting (not `run`) keeps `/check` as an
-  explicit agent action with streaming output in the skill, and
-  keeps the hook a lean gate.
-- **Multi-step checks** — `run -- <cmd>` takes a single command;
-  split lets the check stay a plain script (typecheck → lint → build
-  → test → `markgate set`) and stops forcing you to collapse
-  everything into one command.
+  un-verified commits. Splitting keeps the hook a pure `verify`
+  gate that never runs the check itself.
+- **Multi-step checks** — with `run`, you'd have to repeat the
+  multi-step chain in the hook too. Split lets the chain live only
+  in the script (typecheck → lint → build → test → `markgate set`);
+  the hook stays a single `markgate verify` line.
 - **Commit-then-push** — commit hook: `pnpm test && markgate set`;
   push hook: `markgate verify`. The two hooks see the same marker,
   so push skips re-running when nothing has changed since the
