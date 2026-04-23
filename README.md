@@ -45,8 +45,8 @@ Pick by where your hook sits relative to the check.
 
 - **When**: the hook itself runs the check. Simplest for
   single-command checks.
-- **AI safety net**: if the agent forgot to run the check, the
-  hook runs it before the commit.
+- **AI forget**: the hook runs the check before the commit (a
+  safety net — commit proceeds if the check passes).
 - **How**: prefix your check — `pnpm test` → `markgate run -- pnpm test`.
 - **Behavior**: first call runs and caches on pass; later calls
   with unchanged state skip; a failed check doesn't cache.
@@ -76,11 +76,15 @@ In Claude Code's JSON hook config:
 }
 ```
 
-**`markgate set` + `markgate verify`** — split. Use when the hook
-only verifies — the check runs elsewhere (skill / script / CI)
-and ends with `markgate set`. The check command lives in one
-place — the hook doesn't duplicate it. If the agent forgot to
-run the check, the commit is blocked loudly — no auto-fallback.
+**`markgate set` + `markgate verify`** — split.
+
+- **When**: the hook only verifies. Check runs elsewhere (skill /
+  script / CI), ending with `markgate set`.
+- **Why**: check command lives in one place — the hook doesn't
+  duplicate it.
+- **AI forget**: the commit is blocked loudly — no auto-fallback,
+  agent must re-run.
+
 Concrete scenarios:
 
 - **Explicit check + commit gate** — canonical in Claude Code: the
