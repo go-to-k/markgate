@@ -73,14 +73,28 @@ pnpm run typecheck
 pnpm run lint:fix
 pnpm run build
 pnpm test
-markgate set   # ← record the pass; markgate's only addition
+
+# record the pass; markgate's only addition
+markgate set
 ```
 
 Then the hook only verifies the marker:
 
 ```json
-// .claude/settings.json PreToolUse on `git commit`:
-{ "type": "command", "command": "markgate verify" }
+// .claude/settings.json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git commit*)",
+        "hooks": [
+          { "type": "command", "command": "markgate verify" }
+        ]
+      }
+    ]
+  }
+}
 ```
 
 Full semantics and exit codes are in [Command model](#command-model).
