@@ -57,23 +57,24 @@ and the gate live in different places. Concrete scenarios:
   `git commit` calls `markgate verify` to block un-verified commits.
   The hook sits *in front of* `git commit`, so there's no check for
   it to wrap. This is the canonical case.
-- **Multi-step checks** — `typecheck && lint && build && test &&
-  markgate set`. `run -- <cmd>` wraps a single command; split works
-  with any script or Makefile target.
+- **Multi-step checks** — `run -- <cmd>` wraps a single command;
+  split lets the check stay a plain script (typecheck → lint → build
+  → test → `markgate set`) and stops forcing you to collapse
+  everything into one command.
 - **Commit-then-push** — the commit hook runs the check (`... &&
   markgate set`); the push hook only calls `markgate verify`,
   skipping a second run when nothing has changed since the commit.
 
 ```sh
-# /check skill (or any script that runs the check):
-make check && markgate set
+# /check skill body (or build script, CI job, Make target):
+pnpm run typecheck
+pnpm run lint:fix
+pnpm run build
+npx vitest --run
+markgate set
 
-# .claude/settings.json PreToolUse on `git commit` — sits *in front of*
-# the commit, can't wrap `make check`. It only verifies the marker set
-# above. (This is what forces the split — you can't write `run -- make
-# check` here, or every commit would trigger a fresh check run.)
+# .claude/settings.json PreToolUse on `git commit`:
 markgate verify
-# exit 0 → commit proceeds; exit 1 → commit blocked, agent re-runs /check.
 ```
 
 Full semantics and exit codes are in [Command model](#command-model).
