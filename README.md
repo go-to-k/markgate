@@ -57,9 +57,9 @@ and the gate live in different places. Concrete scenarios:
 - **Claude Code gating `git commit`** — the `/check` skill runs the
   check and calls `markgate set` on success; a PreToolUse hook on
   `git commit` calls `markgate verify` to block un-verified commits.
-  The hook sits *in front of* `git commit`, so there's no check for
-  it to wrap. This is the canonical case.
-- **Multi-step checks** — `run -- <cmd>` wraps a single command;
+  The hook sits *in front of* `git commit`, so it can't run the
+  check itself. This is the canonical case.
+- **Multi-step checks** — `run -- <cmd>` takes a single command;
   split lets the check stay a plain script (typecheck → lint → build
   → test → `markgate set`) and stops forcing you to collapse
   everything into one command.
@@ -108,7 +108,9 @@ commit.**
 ## Use cases
 
 Each section below follows the same shape: **Scope** (config) →
-**Wire** (shell).
+**Wire** (shell). The first use case works with zero config; the
+rest define scoped gates in
+[`.markgate.yml`](#markgateyml-optional) at the repo root.
 
 ### 1. Pre-commit: skip duplicates, catch forgotten checks
 
@@ -131,8 +133,7 @@ hook verifies instantly. Commit without a prior `/check` → hook returns
 ### 2. Pre-PR: docs consistency
 
 **Scope**: only `docs/` and `README.md`. Code-only commits don't
-invalidate the marker. Configured in
-[`.markgate.yml`](#markgateyml-optional) at the repo root:
+invalidate the marker.
 
 ```yaml
 # .markgate.yml
