@@ -41,11 +41,11 @@ moved.
 
 Pick by where your hook sits relative to the check.
 
-**`markgate run -- <cmd>`** — one-shot. Prefix your check command
-with `markgate run --` (`pnpm test` → `markgate run -- pnpm test`).
-First call runs the check; later calls skip on unchanged state.
-Works anywhere — a hook (husky, lefthook, pre-commit framework,
-bare `pre-commit`, Claude Code PreToolUse), a dev terminal, or CI.
+**`markgate run -- <cmd>`** — one-shot. Use when the check and the
+gate live in the same place — one `markgate run -- <cmd>` handles
+both. Prefix your check command (`pnpm test` → `markgate run --
+pnpm test`). First call runs the check; later calls skip on
+unchanged state.
 
 ```sh
 markgate run -- pnpm test
