@@ -156,6 +156,14 @@ message to a temp file first sidesteps all shell escaping.
   markgate to skip the run when repo state hasn't changed since the
   last pass. A vet failure exits 2, so the diagnostic is surfaced
   back to Claude as blocking feedback.
+- `hooks/guard-main-branch.sh` is a PreToolUse hook on Bash: blocks
+  `git commit` / `git push` / `git merge` / `git rebase` when the
+  current branch is `main`. Protects against the "PR merged → local
+  branch still on main (or got switched) → Claude commits to main"
+  mistake, which the project's branch-protection rule catches at
+  push time but only after the commit has already landed locally
+  (expensive to unwind). Exits 2 with a message pointing at the fix
+  (`git checkout -b <feature-branch>`).
 
 ### How the dogfood works (no install needed)
 

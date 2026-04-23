@@ -28,6 +28,14 @@ to `completed` on non-trivial work.
 - Use `TodoWrite` to break the work into verifiable steps.
 - Keep diffs minimal — no drive-by refactors, no hypothetical
   configurability, no "just in case" validation.
+- **Check your branch before every `git commit` / `git push`.**
+  Run `git branch --show-current`. If it says `main`, stop — create
+  or switch to a feature branch first. The `guard-main-branch.sh`
+  PreToolUse hook blocks `git commit`/`push`/`merge`/`rebase` on
+  main as a safety net, but the check belongs in your head too. A
+  lost-then-recovered commit from main is expensive to unwind (cherry
+  -pick onto a new branch, hard-reset main); the 2-second branch
+  check before committing prevents it.
 - **Don't delete something because you're unsure it works — test
   it.** If a hook, script, or feature might be broken, build a
   minimal reproduction (temp dir, fake input, run it) and verify.
