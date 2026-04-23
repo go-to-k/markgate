@@ -107,16 +107,16 @@ commit.**
 
 ## Use cases
 
-Each section below follows the same shape: **Scope** (config) →
-**Wire** (shell). The first use case works with zero config; the
-rest define scoped gates in
-[`.markgate.yml`](#markgateyml-optional) at the repo root.
+Each section below follows the same shape: **Scope** (what triggers
+re-verify) → **Commands** (what goes in your shell / hook). The
+first use case works with zero config; the rest define scoped gates
+in [`.markgate.yml`](#markgateyml-optional) at the repo root.
 
 ### 1. Pre-commit: skip duplicates, catch forgotten checks
 
 **Scope**: anything tracked by git. No config needed (default `git-tree`).
 
-**Wire**:
+**Commands**:
 
 ```sh
 # In your check command:
@@ -145,7 +145,7 @@ gates:
       - "README.md"
 ```
 
-**Wire**:
+**Commands**:
 
 ```sh
 ./scripts/check-docs && markgate set pre-pr
@@ -172,7 +172,7 @@ gates:
       - "package-lock.json"
 ```
 
-**Wire**:
+**Commands**:
 
 ```sh
 trivy image ... && markgate set pre-image-push
@@ -194,7 +194,7 @@ gates:
       - "tests/**"
 ```
 
-**Wire**:
+**Commands**:
 
 ```sh
 go test -cover && markgate set pre-push
