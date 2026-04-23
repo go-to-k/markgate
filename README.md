@@ -80,8 +80,8 @@ In Claude Code's JSON hook config:
 ```
 
 **`markgate set` + `markgate verify`** — split. Two commands:
-`markgate set` records the current state as a marker; `markgate
-verify` exits 0 if state still matches the marker, 1 otherwise.
+`markgate set` records the current state as a marker;
+`markgate verify` compares current state to the marker — exit 0 on match, 1 otherwise.
 
 - **When**: the hook only verifies. Check runs elsewhere (skill /
   script / CI), ending with `markgate set`.
