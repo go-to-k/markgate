@@ -52,7 +52,7 @@ markgate run -- pnpm test
 # First hook: pnpm test runs. Next hook with no changes: instant skip.
 ```
 
-Or in Claude Code:
+Or in Claude Code — same behavior:
 
 ```json
 // .claude/settings.json
@@ -84,9 +84,10 @@ and the gate live in different places. Concrete scenarios:
   split lets the check stay a plain script (typecheck → lint → build
   → test → `markgate set`) and stops forcing you to collapse
   everything into one command.
-- **Commit-then-push** — the commit hook runs the check (`... &&
-  markgate set`); the push hook only calls `markgate verify`,
-  skipping a second run when nothing has changed since the commit.
+- **Commit-then-push** — commit hook: `pnpm test && markgate set`;
+  push hook: `markgate verify`. The two hooks see the same marker,
+  so push skips re-running when nothing has changed since the
+  commit.
 
 ```sh
 # /check skill body (or build script, CI job, Make target):
@@ -95,7 +96,7 @@ pnpm run lint:fix
 pnpm run build
 pnpm test
 
-# record the pass; markgate's only addition
+# Record the pass; markgate's only addition
 markgate set
 ```
 
