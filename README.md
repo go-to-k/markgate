@@ -21,7 +21,6 @@ without a fresh check get blocked, and duplicate runs exit instantly.
 ```sh
 # First run — no marker yet, so `pnpm test` runs and the marker is saved.
 $ markgate run -- pnpm test
-linting...
 tests passed in 4.2s
 
 # Second run — nothing changed since the last success: instant skip.
@@ -30,7 +29,6 @@ $ markgate run -- pnpm test
 # After you edit a file — marker is stale, `pnpm test` runs again.
 $ echo '// fix typo' >> src/foo.go
 $ markgate run -- pnpm test
-linting...
 tests passed in 4.1s
 ```
 
