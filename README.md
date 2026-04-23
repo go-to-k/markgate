@@ -131,7 +131,8 @@ hook verifies instantly. Commit without a prior `/check` → hook returns
 ### 2. Pre-PR: docs consistency
 
 **Scope**: only `docs/` and `README.md`. Code-only commits don't
-invalidate the marker.
+invalidate the marker. Configured in
+[`.markgate.yml`](#markgateyml-optional) at the repo root:
 
 ```yaml
 # .markgate.yml
