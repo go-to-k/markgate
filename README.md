@@ -1,6 +1,6 @@
 # markgate
 
-Skip the checks that already passed. Catch the ones that never ran.
+**Skip the checks that already passed. Catch the ones that never ran.**
 
 Your agent ran the check. Your commit hook runs it again. CI runs
 it again. `markgate` makes the duplicates instant — and catches
