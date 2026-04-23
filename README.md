@@ -78,9 +78,9 @@ markgate set   # ← record the pass; markgate's only addition
 
 Then the hook only verifies the marker:
 
-```sh
-# .claude/settings.json PreToolUse on `git commit`:
-markgate verify
+```json
+// .claude/settings.json PreToolUse on `git commit`:
+{ "type": "command", "command": "markgate verify" }
 ```
 
 Full semantics and exit codes are in [Command model](#command-model).
