@@ -41,11 +41,11 @@ moved.
 
 Pick by where your hook sits relative to the check.
 
-**`markgate run -- <cmd>`** — one-shot. Prefix your check command
-with `markgate run --` wherever it runs — the hook (husky,
-lefthook, pre-commit framework, bare `pre-commit`, or Claude Code
-PreToolUse), a manual dev invocation, a CI job. All sites share
-the cache, so whichever runs first fills it and the rest skip.
+**`markgate run -- <cmd>`** — one-shot. Put `markgate run -- <cmd>`
+wherever the check runs — a hook (husky, lefthook, pre-commit
+framework, bare `pre-commit`, or Claude Code PreToolUse), a dev
+command, or a CI job. First run fills the cache; the rest skip on
+unchanged state.
 
 ```sh
 # Example — .husky/pre-commit (or lefthook.yml, .pre-commit-hooks.yaml, ...):
