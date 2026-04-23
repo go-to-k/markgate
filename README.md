@@ -1,15 +1,16 @@
 # markgate
 
-Stop re-running your checks. Skip the commit hook when nothing has
-changed since the last time they passed.
+Skip the checks that already passed. Catch the ones that never ran.
+
+Your agent ran the check. Your commit hook runs it again. CI runs
+it again. `markgate` makes the duplicates instant — and catches
+commits where the check never ran.
 
 `markgate` is a verification-state cache for hook managers (Claude
 Code hooks, husky, lefthook, pre-commit, bare `.git/hooks/*`). When a
 check passes, it writes a small JSON **marker** recording the current
 repo state. On the next hook run, if the state hasn't moved, the
 check skips in milliseconds — if it has, the check runs again.
-Especially useful in AI-agent-driven workflows, where the same check
-runs redundantly or gets quietly skipped.
 
 ## 20-second tour
 
