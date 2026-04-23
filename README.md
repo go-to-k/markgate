@@ -16,23 +16,23 @@ check skips in milliseconds — if it has, the check runs again.
 ## 20-second tour
 
 ```sh
-# First run — no marker yet, so `./check.sh` runs and the marker is saved.
-$ markgate run -- ./check.sh
+# First run — no marker yet, so `pnpm test` runs and the marker is saved.
+$ markgate run -- pnpm test
 linting...
 tests passed in 4.2s
 
 # Second run — nothing changed since the last success: instant skip.
-$ markgate run -- ./check.sh
+$ markgate run -- pnpm test
 
-# After you edit a file — marker is stale, `./check.sh` runs again.
+# After you edit a file — marker is stale, `pnpm test` runs again.
 $ echo '// fix typo' >> src/foo.go
-$ markgate run -- ./check.sh
+$ markgate run -- pnpm test
 linting...
 tests passed in 4.1s
 ```
 
 Zero config. No key argument needed. That is the intended daily usage.
-(`./check.sh` is a placeholder — substitute your project's verification
+(`pnpm test` is a placeholder — substitute your project's verification
 command.)
 
 ## Two shapes: `run` vs `set` + `verify`
@@ -45,8 +45,8 @@ the check directly (husky, lefthook, pre-commit framework, bare
 
 ```sh
 # .husky/pre-commit (or lefthook.yml, .pre-commit-hooks.yaml, ...):
-markgate run -- ./check.sh
-# First hook: ./check.sh runs. Next hook with no changes: instant skip.
+markgate run -- pnpm test
+# First hook: pnpm test runs. Next hook with no changes: instant skip.
 ```
 
 **`markgate set` + `markgate verify`** — split. Use when the check
@@ -87,14 +87,14 @@ Hook managers are great at *running* checks; none remember when one
 just passed. `markgate` is that memory layer — exit 0 = verified,
 exit 1 = run it. One line to adopt, one line to remove.
 
-**Redundant re-runs.** Your agent (or you) just ran `./check.sh`.
+**Skip what already passed.** Your agent (or you) just ran `pnpm test`.
 The commit hook runs it again. `gh pr create` runs it again. CI
 runs it again — four passes, one change. `markgate` lets the second
 / third / fourth of those exit instantly when the repo state hasn't
 moved. (The CI pass needs a bit of extra wiring — see
 [Sharing markers](#sharing-markers-across-machines-ci--teammates).)
 
-**Quietly skipped checks.** Your agent decided to run `/check`, then
+**Catch what never ran.** Your agent decided to run `/check`, then
 ran out of tool budget / context and committed anyway. Or a tool
 call silently failed. Or it simply forgot. Wire `markgate verify`
 into your pre-commit or PreToolUse hook and there's no bypass by
@@ -108,7 +108,7 @@ commit.**
 Each section below follows the same shape: **Scope** (config) →
 **Wire** (shell).
 
-### 1. Pre-commit: skip duplicate checks
+### 1. Pre-commit: skip duplicates, catch forgotten checks
 
 **Scope**: anything tracked by git. No config needed (default `git-tree`).
 
@@ -116,7 +116,7 @@ Each section below follows the same shape: **Scope** (config) →
 
 ```sh
 # In your check command:
-./check.sh && markgate set
+pnpm test && markgate set
 
 # In your Claude Code PreToolUse hook on `git commit*`:
 markgate verify
@@ -230,7 +230,7 @@ Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
 
 ## Drop into your hook manager
 
-Substitute `./check.sh` with your verification command. When the
+Substitute `pnpm test` with your verification command. When the
 hook can wrap the check, use `run`; when it sits *in front of* a
 separate command, use `verify` and pair it with `set` in the check
 itself (see [Two shapes](#two-shapes-run-vs-set--verify)).
@@ -238,7 +238,7 @@ itself (see [Two shapes](#two-shapes-run-vs-set--verify)).
 **husky** — `.husky/pre-commit`:
 
 ```sh
-markgate run -- ./check.sh
+markgate run -- pnpm test
 ```
 
 **lefthook** — `lefthook.yml`:
@@ -247,7 +247,7 @@ markgate run -- ./check.sh
 pre-commit:
   commands:
     check:
-      run: markgate run -- ./check.sh
+      run: markgate run -- pnpm test
 ```
 
 **pre-commit framework** — `.pre-commit-hooks.yaml`:
@@ -258,7 +258,7 @@ repos:
     hooks:
       - id: markgate-check
         name: markgate check
-        entry: markgate run -- ./check.sh
+        entry: markgate run -- pnpm test
         language: system
         pass_filenames: false
 ```
@@ -281,8 +281,8 @@ repos:
 }
 ```
 
-In your check skill: `./check.sh && markgate set`. See
-[Use case 1](#1-pre-commit-skip-duplicate-checks) for the full flow.
+In your check skill: `pnpm test && markgate set`. See
+[Use case 1](#1-pre-commit-skip-duplicates-catch-forgotten-checks) for the full flow.
 
 ## Command model
 
@@ -308,7 +308,7 @@ lint, build, tests) that don't fit into a single `<cmd>`:
 typecheck && lint && build && test && markgate set
 
 # Wherever the gate runs — short-circuit on a fresh marker, else re-run:
-markgate verify || ./check.sh
+markgate verify || pnpm test
 ```
 
 ### Exit codes
@@ -395,7 +395,7 @@ Flag syntax is identical across hash types. With `--hash files`,
 config file:
 
 ```sh
-markgate run --exclude 'vendor/**' -- ./check.sh
+markgate run --exclude 'vendor/**' -- pnpm test
 ```
 
 ### Environment variables
