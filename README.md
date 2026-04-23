@@ -41,15 +41,15 @@ moved.
 
 Pick by where your hook sits relative to the check.
 
-**`markgate run -- <cmd>`** — one-shot.
+**`markgate run -- <cmd>`** — one-shot. One command does it all:
+checks the marker, runs `<cmd>` if stale or missing, caches on
+pass (leaves the marker untouched on fail).
 
 - **When**: the hook itself runs the check. Simplest for
   single-command checks.
 - **AI forget**: the hook runs the check before the commit (safety
   net — commit proceeds if the check passes).
 - **How**: prefix your check — `pnpm test` → `markgate run -- pnpm test`.
-- **Behavior**: first call runs and caches on pass; later calls
-  with unchanged state skip; a failed check doesn't cache.
 
 ```sh
 markgate run -- pnpm test
@@ -76,7 +76,9 @@ In Claude Code's JSON hook config:
 }
 ```
 
-**`markgate set` + `markgate verify`** — split.
+**`markgate set` + `markgate verify`** — split. Two commands:
+`markgate set` records the current state as a marker; `markgate
+verify` exits 0 if state still matches the marker, 1 otherwise.
 
 - **When**: the hook only verifies. Check runs elsewhere (skill /
   script / CI), ending with `markgate set`.
