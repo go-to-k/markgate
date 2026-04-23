@@ -33,9 +33,10 @@ tests passed in 4.1s
 ```
 
 Under the hood, when a check passes, `markgate` writes a small JSON
-**marker** recording the current repo state. The next hook run exits
-in milliseconds if the state matches, or re-runs the check if it's
-moved.
+**marker** recording the current repo state. Later calls compare
+current state to the marker — matched → skip; moved (edit, missed
+run, new commit) → shape-specific response (`run` re-runs the
+check; split's `verify` fails and blocks the commit).
 
 ## Two shapes: `run` vs `set` + `verify`
 
@@ -45,9 +46,8 @@ Pick by where your hook sits relative to the check.
 
 - **When**: the hook itself runs the check. Simplest for
   single-command checks.
-- **Stale / missing marker**: the hook runs the check before the
-  commit (safety net — e.g. agent forgot to run it, or edited
-  files after running it). Commit proceeds if the check passes.
+- **AI forget**: the hook runs the check before the commit (safety
+  net — commit proceeds if the check passes).
 - **How**: prefix your check — `pnpm test` → `markgate run -- pnpm test`.
 - **Behavior**: first call runs and caches on pass; later calls
   with unchanged state skip; a failed check doesn't cache.
@@ -83,9 +83,8 @@ In Claude Code's JSON hook config:
   script / CI), ending with `markgate set`.
 - **Why**: check command lives in one place — the hook doesn't
   duplicate it.
-- **Stale / missing marker**: commit is blocked loudly — e.g. agent
-  forgot to run the check, or edited files after `markgate set`.
-  No auto-fallback; agent must re-run.
+- **AI forget**: the commit is blocked loudly — no auto-fallback,
+  agent must re-run.
 
 Concrete scenarios:
 
