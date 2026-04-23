@@ -48,9 +48,8 @@ command, or a CI job. First run fills the cache; the rest skip on
 unchanged state.
 
 ```sh
-# Example — .husky/pre-commit (or lefthook.yml, .pre-commit-hooks.yaml, ...):
 markgate run -- pnpm test
-# First invocation caches the pass; later invocations with no changes: instant skip.
+# First invocation caches the pass; later invocations with no changes skip.
 ```
 
 Or in Claude Code — same behavior:
@@ -78,9 +77,8 @@ and the gate live in different places. Concrete scenarios:
 - **Explicit check + commit gate** — canonical in Claude Code: the
   `/check` skill runs the check and calls `markgate set`; a
   PreToolUse hook on `git commit` calls `markgate verify` to block
-  un-verified commits. Splitting (not `run`) keeps `/check` as an
-  explicit agent action with streaming output in the skill, and
-  keeps the hook a lean gate.
+  un-verified commits. Splitting keeps the hook a pure `verify`
+  gate that never runs the check itself.
 - **Multi-step checks** — `run -- <cmd>` takes a single command;
   split lets the check stay a plain script (typecheck → lint → build
   → test → `markgate set`) and stops forcing you to collapse
