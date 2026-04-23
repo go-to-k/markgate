@@ -1,7 +1,7 @@
 # markgate
 
-> Stop re-running your checks. Skip the commit hook when nothing has
-> changed since the last time they passed.
+Stop re-running your checks. Skip the commit hook when nothing has
+changed since the last time they passed.
 
 `markgate` is a verification-state cache for hook managers (Claude
 Code hooks, husky, lefthook, pre-commit, bare `.git/hooks/*`). When a
