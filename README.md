@@ -82,29 +82,6 @@ markgate verify
 Full semantics and exit codes are in [Command model](#command-model).
 Both shapes appear throughout the use cases below.
 
-## Why markgate?
-
-Two failure modes in an AI-agent-driven workflow, one cache layer.
-Hook managers are great at *running* checks; none remember when one
-just passed. `markgate` is that memory layer — exit 0 = verified,
-exit 1 = run it. One line to adopt, one line to remove.
-
-**Skip what already passed.** Your agent (or you) just ran `pnpm test`.
-The commit hook runs it again. `gh pr create` runs it again. CI
-runs it again — four passes, one change. `markgate` lets the second
-/ third / fourth of those exit instantly when the repo state hasn't
-moved. (The CI pass needs a bit of extra wiring — see
-[Sharing markers](#sharing-markers-across-machines-ci--teammates).)
-
-**Catch what never ran.** Your agent decided to run `/check`, then
-ran out of tool budget / context and committed anyway. Or a tool
-call silently failed. Or it simply forgot. Wire `markgate verify`
-into your pre-commit or PreToolUse hook and there's no bypass by
-"forgetting" — a fresh marker exists only after a check actually
-passed against the current state. Exit 1 with "no marker" is a
-loud, debuggable failure; a silent skip is not. **No marker, no
-commit.**
-
 ## Use cases
 
 Each section below follows the same shape: **Scope** (what triggers
