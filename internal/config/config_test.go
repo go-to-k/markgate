@@ -77,6 +77,18 @@ func TestGate_DefaultForNilConfig(t *testing.T) {
 	}
 }
 
+func TestLoad_StateDirPreserved(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "gates:\n  pre-pr:\n    hash: git-tree\n    state_dir: .cache/mg\n")
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := c.Gate("pre-pr"); g.StateDir != ".cache/mg" {
+		t.Errorf("Gate.StateDir = %q, want %q", g.StateDir, ".cache/mg")
+	}
+}
+
 func TestGate_DefaultForMissingKey(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, "gates:\n  pre-commit:\n    hash: git-tree\n")

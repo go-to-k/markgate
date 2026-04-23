@@ -1,4 +1,7 @@
-// Package state reads and writes marker files under .git/markgate/<key>.json.
+// Package state reads and writes marker files. The default layout is
+// <gitDir>/markgate/<key>.json; callers may also supply a custom
+// directory (e.g. for CI cache integration), in which case the marker
+// is written at <dir>/<key>.json without the extra "markgate" subdir.
 //
 // The on-disk JSON schema is an implementation detail; no compatibility
 // guarantees are made across markgate versions. Writes are atomic: data
@@ -31,8 +34,20 @@ type Marker struct {
 }
 
 // Path returns the marker file path for a given git directory and key.
+// The default layout places markers under <gitDir>/markgate/<key>.json so
+// they live inside .git and need no gitignore entry.
 func Path(gitDir, key string) string {
-	return filepath.Join(gitDir, "markgate", key+".json")
+	return PathIn(filepath.Join(gitDir, "markgate"), key)
+}
+
+// PathIn returns the marker file path directly under dir, without the
+// extra "markgate" subdirectory that Path adds. Callers use this when
+// the user has explicitly chosen a storage directory (via --state-dir,
+// MARKGATE_STATE_DIR, or state_dir: in .markgate.yml): the directory
+// is already theirs, so there is no reason to nest another folder
+// inside it.
+func PathIn(dir, key string) string {
+	return filepath.Join(dir, key+".json")
 }
 
 // Load reads a marker. Returns ErrNotFound when the file does not exist.

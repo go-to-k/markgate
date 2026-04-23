@@ -35,6 +35,11 @@ type Gate struct {
 	Hash    string   `yaml:"hash"`
 	Include []string `yaml:"include,omitempty"`
 	Exclude []string `yaml:"exclude,omitempty"`
+	// StateDir overrides the marker storage directory for this gate.
+	// Relative paths resolve against the repo top-level (same semantics as
+	// the --state-dir flag). Committing an absolute path is an anti-pattern
+	// because it won't exist on other machines; prefer a relative path.
+	StateDir string `yaml:"state_dir,omitempty"`
 }
 
 // Load reads topLevel/.markgate.yml. A missing file yields an empty

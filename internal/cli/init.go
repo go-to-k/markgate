@@ -16,7 +16,9 @@ const initSkeleton = `# markgate configuration - https://github.com/go-to-k/mark
 # This file is optional. Zero-config (hash: git-tree) is the default.
 # Define a gate here only when you want:
 #   - exclude patterns on the default git-tree hash, or
-#   - a narrow-scope (hash: files) gate for docs / Docker / coverage.
+#   - a narrow-scope (hash: files) gate for docs / Docker / coverage, or
+#   - a non-default marker storage directory (state_dir) for sharing
+#     markers across machines / CI.
 
 gates:
   # Default gate (used when ` + "`markgate verify`" + ` runs without a key).
@@ -25,6 +27,22 @@ gates:
     # exclude:
     #   - "vendor/**"
     #   - "node_modules/**"
+    #
+    # state_dir controls where the marker file is written. Prefer
+    # relative paths (resolved against the repo top-level) so every
+    # machine agrees on the location. Two patterns:
+    #
+    #   Pattern A: not committed (e.g. restored from CI cache).
+    #     state_dir: .markgate-cache
+    #     -> gitignore .markgate-cache/ (required if you stay on
+    #        hash: git-tree, optional hygiene for hash: files).
+    #
+    #   Pattern B: committed to git for zero-infra local->CI sharing.
+    #     state_dir: .markgate-state
+    #     -> requires hash: files (git-tree would break: the commit
+    #        changes HEAD and stales the marker it just wrote).
+    #
+    # See README "Sharing markers" for the full picture.
 
   # Example: narrow-scope gate for PR-time docs checks.
   # pre-pr:
