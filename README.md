@@ -27,7 +27,7 @@ tests passed in 4.2s
 $ markgate run -- pnpm test
 
 # After you edit a file — cache is stale, `pnpm test` runs again.
-$ echo '// fix typo' >> src/foo.go
+$ echo '// fix typo' >> src/foo.ts
 $ markgate run -- pnpm test
 tests passed in 4.1s
 ```
@@ -41,9 +41,9 @@ moved.
 
 Pick by where your hook sits relative to the check.
 
-**`markgate run -- <cmd>`** — one-shot. Use when the hook can wrap
-the check directly (husky, lefthook, pre-commit framework, bare
-`pre-commit`).
+**`markgate run -- <cmd>`** — one-shot. Use where the hook runs the
+check itself (husky, lefthook, pre-commit framework, bare
+`pre-commit`): just prefix your check command with `markgate run --`.
 
 ```sh
 # .husky/pre-commit (or lefthook.yml, .pre-commit-hooks.yaml, ...):
