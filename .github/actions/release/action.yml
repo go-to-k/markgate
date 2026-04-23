@@ -1,4 +1,5 @@
 name: release
+description: Build and publish a release with GoReleaser, updating the Homebrew tap.
 inputs:
   github-token:
     required: true
