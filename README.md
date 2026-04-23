@@ -9,15 +9,13 @@ hooks can:
 - **Catch the ones that never ran** — block the commit when the
   check hasn't been recorded yet.
 
-**Especially useful in the AI-coding-agent era.** Your agent ran
-the check. Your commit hook runs it again. `gh pr create` runs it
-again. CI runs it again. `markgate` makes the duplicates instant —
-and catches commits where the check never ran.
-
-When a check passes, `markgate` writes a small JSON **marker**
-recording the current repo state. The next hook run exits in
-milliseconds if the state matches, or re-runs the check if it's
-moved.
+**Especially useful in the AI-coding-agent era.** You tell your
+agent to run the check; sometimes it forgets (context loss, tokens,
+speed pressure) and commits anyway. You add a pre-commit hook to
+enforce it; now the check runs redundantly every commit — agent,
+hook, `gh pr create`, CI, four passes, one state. `markgate` breaks
+this dilemma: commits without a fresh check get blocked, and
+duplicate runs exit instantly.
 
 ## 20-second tour
 
@@ -40,6 +38,11 @@ tests passed in 4.1s
 Zero config. No key argument needed. That is the intended daily usage.
 (`pnpm test` is a placeholder — substitute your project's verification
 command.)
+
+Under the hood, when a check passes, `markgate` writes a small JSON
+**marker** recording the current repo state. The next hook run exits
+in milliseconds if the state matches, or re-runs the check if it's
+moved.
 
 ## Two shapes: `run` vs `set` + `verify`
 
