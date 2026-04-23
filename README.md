@@ -41,12 +41,15 @@ moved.
 
 Pick by where your hook sits relative to the check.
 
-**`markgate run -- <cmd>`** — one-shot. Use when the hook itself
-runs the check — simplest for single-command checks. If the agent
-forgot to run it, the hook runs it before the commit (a safety
-net). Prefix your check: `pnpm test` → `markgate run -- pnpm
-test`. First call runs; later calls skip on unchanged state. A
-failed check doesn't cache.
+**`markgate run -- <cmd>`** — one-shot.
+
+- **When**: the hook itself runs the check. Simplest for
+  single-command checks.
+- **AI safety net**: if the agent forgot to run the check, the
+  hook runs it before the commit.
+- **How**: prefix your check — `pnpm test` → `markgate run -- pnpm test`.
+- **Behavior**: first call runs and caches on pass; later calls
+  with unchanged state skip; a failed check doesn't cache.
 
 ```sh
 markgate run -- pnpm test
