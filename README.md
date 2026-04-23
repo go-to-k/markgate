@@ -65,10 +65,13 @@ and the gate live in different places. Concrete scenarios:
   skipping a second run when nothing has changed since the commit.
 
 ```sh
-# In your /check skill (or verify script, build.sh, ...):
+# /check skill (or any script that runs the check):
 make check && markgate set
 
-# In .claude/settings.json PreToolUse hook on `git commit`:
+# .claude/settings.json PreToolUse on `git commit` — sits *in front of*
+# the commit, can't wrap `make check`. It only verifies the marker set
+# above. (This is what forces the split — you can't write `run -- make
+# check` here, or every commit would trigger a fresh check run.)
 markgate verify
 # exit 0 → commit proceeds; exit 1 → commit blocked, agent re-runs /check.
 ```
