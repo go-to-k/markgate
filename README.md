@@ -42,14 +42,15 @@ moved.
 Pick by where your hook sits relative to the check.
 
 **`markgate run -- <cmd>`** — one-shot. Use when the check and the
-gate live in the same place — one `markgate run -- <cmd>` handles
-both. Prefix your check command (`pnpm test` → `markgate run --
-pnpm test`). First call runs the check; later calls skip on
-unchanged state.
+gate happen in one command — a single `markgate run -- <cmd>`
+handles both. Prefix your check: `pnpm test` → `markgate run --
+pnpm test`. First call runs; later calls skip on unchanged state.
+A failed check doesn't cache.
 
 ```sh
 markgate run -- pnpm test
-# First invocation caches the pass; later invocations with no changes skip.
+# Pass: marker cached, later calls skip instantly.
+# Fail: marker unchanged, next call re-runs the check.
 ```
 
 In Claude Code's JSON hook config:
