@@ -41,11 +41,12 @@ moved.
 
 Pick by where your hook sits relative to the check.
 
-**`markgate run -- <cmd>`** — one-shot. Use when the check and the
-gate happen in one command — a single `markgate run -- <cmd>`
-handles both. Prefix your check: `pnpm test` → `markgate run --
-pnpm test`. First call runs; later calls skip on unchanged state.
-A failed check doesn't cache.
+**`markgate run -- <cmd>`** — one-shot. Use when the hook itself
+runs the check — simplest for single-command checks. If the agent
+forgot to run it, the hook runs it before the commit (a safety
+net). Prefix your check: `pnpm test` → `markgate run -- pnpm
+test`. First call runs; later calls skip on unchanged state. A
+failed check doesn't cache.
 
 ```sh
 markgate run -- pnpm test
@@ -72,18 +73,22 @@ In Claude Code's JSON hook config:
 }
 ```
 
-**`markgate set` + `markgate verify`** — split. Use when the check
-and the gate live in different places. Concrete scenarios:
+**`markgate set` + `markgate verify`** — split. Use when the hook
+only verifies — the check runs elsewhere (skill / script / CI)
+and ends with `markgate set`. The check command lives in one
+place — the hook doesn't duplicate it. If the agent forgot to
+run the check, the commit is blocked loudly — no auto-fallback.
+Concrete scenarios:
 
 - **Explicit check + commit gate** — canonical in Claude Code: the
   `/check` skill runs the check and calls `markgate set`; a
   PreToolUse hook on `git commit` calls `markgate verify` to block
   un-verified commits. Splitting keeps the hook a pure `verify`
   gate that never runs the check itself.
-- **Multi-step checks** — `run -- <cmd>` takes a single command;
-  split lets the check stay a plain script (typecheck → lint → build
-  → test → `markgate set`) and stops forcing you to collapse
-  everything into one command.
+- **Multi-step checks** — with `run`, you'd have to repeat the
+  multi-step chain in the hook too. Split lets the chain live only
+  in the script (typecheck → lint → build → test → `markgate set`);
+  the hook stays a single `markgate verify` line.
 - **Commit-then-push** — commit hook: `pnpm test && markgate set`;
   push hook: `markgate verify`. The two hooks see the same marker,
   so push skips re-running when nothing has changed since the
