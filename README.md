@@ -49,8 +49,9 @@ pass (leaves the marker untouched on fail).
   single-command checks.
 - **Why**: no separate `set` and `verify` to wire — `markgate run`
   collapses them into one call.
-- **AI forget**: the hook runs the check before the commit (safety
-  net — commit proceeds if the check passes).
+- **AI forget (or edit after the check)**: the hook runs the check
+  before the commit (safety net — commit proceeds if the check
+  passes).
 - **How**: prefix your check — `pnpm test` → `markgate run -- pnpm test`.
 
 ```sh
@@ -86,8 +87,8 @@ verify` exits 0 if state still matches the marker, 1 otherwise.
   script / CI), ending with `markgate set`.
 - **Why**: check command lives in one place — the hook doesn't
   duplicate it.
-- **AI forget**: the commit is blocked loudly — no auto-fallback,
-  agent must re-run.
+- **AI forget (or edit after the check)**: the commit is blocked
+  loudly — no auto-fallback, agent must re-run.
 - **How**: `markgate set` at the check site, `markgate verify` in
   the hook (concrete scenarios below).
 
