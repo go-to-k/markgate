@@ -76,7 +76,7 @@ pnpm test
 markgate set   # ← record the pass; markgate's only addition
 ```
 
-Then the hook — a separate file — only verifies the marker:
+Then the hook only verifies the marker:
 
 ```sh
 # .claude/settings.json PreToolUse on `git commit`:
