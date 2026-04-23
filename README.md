@@ -125,9 +125,11 @@ Both shapes appear throughout the use cases below.
 ## Use cases
 
 Each section below follows the same shape: **Scope** (what triggers
-re-verify) → **Commands** (what goes in your shell / hook). The
-first use case works with zero config; the rest define scoped gates
-in [`.markgate.yml`](#markgateyml-optional) at the repo root.
+re-verify — a [`hash`](#hashing-strategy-git-tree-vs-files) strategy)
+→ **Commands** (what goes in your shell / hook). The first use case
+works with zero config (default `git-tree` hash, whole repo); the
+rest define scoped `files`-hash gates in
+[`.markgate.yml`](#markgateyml-optional) at the repo root.
 
 ### 1. Pre-commit: skip duplicates, catch forgotten checks
 
