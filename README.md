@@ -2,9 +2,10 @@
 
 **Skip the checks that already passed. Catch the ones that never ran.**
 
-Your agent ran the check. Your commit hook runs it again. CI runs
-it again. `markgate` makes the duplicates instant — and catches
-commits where the check never ran.
+**Especially useful in the AI-coding-agent era.** Your agent ran
+the check. Your commit hook runs it again. `gh pr create` runs it
+again. CI runs it again. `markgate` makes the duplicates instant —
+and catches commits where the check never ran.
 
 `markgate` is a verification-state cache for hook managers (Claude
 Code hooks, husky, lefthook, pre-commit, bare `.git/hooks/*`). When a
@@ -36,15 +37,38 @@ command.)
 
 ## Two shapes: `run` vs `set` + `verify`
 
-Pick by where your hook sits relative to the check:
+Pick by where your hook sits relative to the check.
 
-- **`markgate run -- <cmd>`** — one-shot. Use when the hook can wrap
-  the check directly (husky, lefthook, pre-commit framework, bare
-  `pre-commit`).
-- **`markgate set` + `markgate verify`** — split. Use when the check
-  and the gate live in different places (Claude Code PreToolUse,
-  multi-step pipelines, commit-then-push flows). The check calls
-  `set` on success; the gate calls `verify` to short-circuit.
+**`markgate run -- <cmd>`** — one-shot. Use when the hook can wrap
+the check directly (husky, lefthook, pre-commit framework, bare
+`pre-commit`).
+
+```sh
+markgate run -- make check
+```
+
+**`markgate set` + `markgate verify`** — split. Use when the check
+and the gate live in different places. Concrete scenarios:
+
+- **Claude Code gating `git commit`** — the `/check` skill runs the
+  check and calls `markgate set` on success; a PreToolUse hook on
+  `git commit` calls `markgate verify` to block un-verified commits.
+  The hook sits *in front of* `git commit`, so there's no check for
+  it to wrap. This is the canonical case.
+- **Multi-step checks** — `typecheck && lint && build && test &&
+  markgate set`. `run -- <cmd>` wraps a single command; split works
+  with any script or Makefile target.
+- **Commit-then-push** — the commit hook runs the check (`... &&
+  markgate set`); the push hook only calls `markgate verify`,
+  skipping a second run when nothing has changed since the commit.
+
+```sh
+# Wherever the check runs — record state on success:
+make check && markgate set
+
+# Wherever the gate runs — short-circuit on a fresh marker, else re-run:
+markgate verify || make check
+```
 
 Full semantics and exit codes are in [Command model](#command-model).
 Both shapes appear throughout the use cases below.
@@ -52,6 +76,9 @@ Both shapes appear throughout the use cases below.
 ## Why markgate?
 
 Two failure modes in an AI-agent-driven workflow, one cache layer.
+Hook managers are great at *running* checks; none remember when one
+just passed. `markgate` is that memory layer — exit 0 = verified,
+exit 1 = run it. One line to adopt, one line to remove.
 
 **Redundant re-runs.** Your agent (or you) just ran `make check`.
 The commit hook runs it again. `gh pr create` runs it again. CI
@@ -68,14 +95,6 @@ into your pre-commit or PreToolUse hook and there's no bypass by
 passed against the current state. Exit 1 with "no marker" is a
 loud, debuggable failure; a silent skip is not. **No marker, no
 commit.**
-
-Existing hook managers (husky / lefthook / pre-commit / Claude Code
-hooks) are great at *running* checks. None of them remember that a
-check just passed, or notice when it hasn't run yet. `markgate` is
-that memory layer — exit 0 = "verified, skip", exit 1 = "stale or
-absent, run it". It's not a hook manager itself; it slots into
-whatever hook manager you already use — one line to adopt, one line
-to remove.
 
 ## Use cases
 
@@ -235,16 +254,6 @@ repos:
         entry: markgate run -- make check
         language: system
         pass_filenames: false
-```
-
-**Bare `.git/hooks/pre-commit`**:
-
-```sh
-#!/bin/sh
-markgate verify || {
-  echo "Run your check command first, then commit." >&2
-  exit 1
-}
 ```
 
 **Claude Code (PreToolUse)** — `.claude/settings.json`:
