@@ -16,23 +16,23 @@ check skips in milliseconds — if it has, the check runs again.
 ## 20-second tour
 
 ```sh
-# First run — no marker yet, so `make check` runs and the marker is saved.
-$ markgate run -- make check
+# First run — no marker yet, so `./check.sh` runs and the marker is saved.
+$ markgate run -- ./check.sh
 linting...
 tests passed in 4.2s
 
 # Second run — nothing changed since the last success: instant skip.
-$ markgate run -- make check
+$ markgate run -- ./check.sh
 
-# After you edit a file — marker is stale, `make check` runs again.
+# After you edit a file — marker is stale, `./check.sh` runs again.
 $ echo '// fix typo' >> src/foo.go
-$ markgate run -- make check
+$ markgate run -- ./check.sh
 linting...
 tests passed in 4.1s
 ```
 
 Zero config. No key argument needed. That is the intended daily usage.
-(`make check` is a placeholder — substitute your project's verification
+(`./check.sh` is a placeholder — substitute your project's verification
 command.)
 
 ## Two shapes: `run` vs `set` + `verify`
@@ -45,8 +45,8 @@ the check directly (husky, lefthook, pre-commit framework, bare
 
 ```sh
 # .husky/pre-commit (or lefthook.yml, .pre-commit-hooks.yaml, ...):
-markgate run -- make check
-# First hook: make check runs. Next hook with no changes: instant skip.
+markgate run -- ./check.sh
+# First hook: ./check.sh runs. Next hook with no changes: instant skip.
 ```
 
 **`markgate set` + `markgate verify`** — split. Use when the check
@@ -70,7 +70,7 @@ and the gate live in different places. Concrete scenarios:
 pnpm run typecheck
 pnpm run lint:fix
 pnpm run build
-npx vitest --run
+pnpm test
 markgate set
 
 # .claude/settings.json PreToolUse on `git commit`:
@@ -87,7 +87,7 @@ Hook managers are great at *running* checks; none remember when one
 just passed. `markgate` is that memory layer — exit 0 = verified,
 exit 1 = run it. One line to adopt, one line to remove.
 
-**Redundant re-runs.** Your agent (or you) just ran `make check`.
+**Redundant re-runs.** Your agent (or you) just ran `./check.sh`.
 The commit hook runs it again. `gh pr create` runs it again. CI
 runs it again — four passes, one change. `markgate` lets the second
 / third / fourth of those exit instantly when the repo state hasn't
@@ -116,7 +116,7 @@ Each section below follows the same shape: **Scope** (config) →
 
 ```sh
 # In your check command:
-make check && markgate set
+./check.sh && markgate set
 
 # In your Claude Code PreToolUse hook on `git commit*`:
 markgate verify
@@ -230,7 +230,7 @@ Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
 
 ## Drop into your hook manager
 
-Substitute `make check` with your verification command. When the
+Substitute `./check.sh` with your verification command. When the
 hook can wrap the check, use `run`; when it sits *in front of* a
 separate command, use `verify` and pair it with `set` in the check
 itself (see [Two shapes](#two-shapes-run-vs-set--verify)).
@@ -238,7 +238,7 @@ itself (see [Two shapes](#two-shapes-run-vs-set--verify)).
 **husky** — `.husky/pre-commit`:
 
 ```sh
-markgate run -- make check
+markgate run -- ./check.sh
 ```
 
 **lefthook** — `lefthook.yml`:
@@ -247,7 +247,7 @@ markgate run -- make check
 pre-commit:
   commands:
     check:
-      run: markgate run -- make check
+      run: markgate run -- ./check.sh
 ```
 
 **pre-commit framework** — `.pre-commit-hooks.yaml`:
@@ -258,7 +258,7 @@ repos:
     hooks:
       - id: markgate-check
         name: markgate check
-        entry: markgate run -- make check
+        entry: markgate run -- ./check.sh
         language: system
         pass_filenames: false
 ```
@@ -281,7 +281,7 @@ repos:
 }
 ```
 
-In your check skill: `make check && markgate set`. See
+In your check skill: `./check.sh && markgate set`. See
 [Use case 1](#1-pre-commit-skip-duplicate-checks) for the full flow.
 
 ## Command model
@@ -308,7 +308,7 @@ lint, build, tests) that don't fit into a single `<cmd>`:
 typecheck && lint && build && test && markgate set
 
 # Wherever the gate runs — short-circuit on a fresh marker, else re-run:
-markgate verify || make check
+markgate verify || ./check.sh
 ```
 
 ### Exit codes
@@ -395,7 +395,7 @@ Flag syntax is identical across hash types. With `--hash files`,
 config file:
 
 ```sh
-markgate run --exclude 'vendor/**' -- make check
+markgate run --exclude 'vendor/**' -- ./check.sh
 ```
 
 ### Environment variables
