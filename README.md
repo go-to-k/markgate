@@ -42,13 +42,33 @@ moved.
 Pick by where your hook sits relative to the check.
 
 **`markgate run -- <cmd>`** — one-shot. Use where the hook runs the
-check itself (husky, lefthook, pre-commit framework, bare
-`pre-commit`): just prefix your check command with `markgate run --`.
+check itself — husky, lefthook, pre-commit framework, bare
+`pre-commit`, or Claude Code PreToolUse. Just prefix your check
+command with `markgate run --`.
 
 ```sh
 # .husky/pre-commit (or lefthook.yml, .pre-commit-hooks.yaml, ...):
 markgate run -- pnpm test
 # First hook: pnpm test runs. Next hook with no changes: instant skip.
+```
+
+Or in Claude Code:
+
+```json
+// .claude/settings.json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git commit*)",
+        "hooks": [
+          { "type": "command", "command": "markgate run -- pnpm test" }
+        ]
+      }
+    ]
+  }
+}
 ```
 
 **`markgate set` + `markgate verify`** — split. Use when the check
@@ -57,8 +77,9 @@ and the gate live in different places. Concrete scenarios:
 - **Claude Code gating `git commit`** — the `/check` skill runs the
   check and calls `markgate set` on success; a PreToolUse hook on
   `git commit` calls `markgate verify` to block un-verified commits.
-  The hook sits *in front of* `git commit`, so it can't run the
-  check itself. This is the canonical case.
+  Splitting instead of `run` keeps `/check` as an explicit agent
+  action with streaming output in the skill, and keeps the hook
+  itself a lean gate. This is the canonical case.
 - **Multi-step checks** — `run -- <cmd>` takes a single command;
   split lets the check stay a plain script (typecheck → lint → build
   → test → `markgate set`) and stops forcing you to collapse
