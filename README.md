@@ -74,12 +74,12 @@ Or in Claude Code:
 **`markgate set` + `markgate verify`** — split. Use when the check
 and the gate live in different places. Concrete scenarios:
 
-- **Claude Code gating `git commit`** — the `/check` skill runs the
-  check and calls `markgate set` on success; a PreToolUse hook on
-  `git commit` calls `markgate verify` to block un-verified commits.
-  Splitting instead of `run` keeps `/check` as an explicit agent
-  action with streaming output in the skill, and keeps the hook
-  itself a lean gate. This is the canonical case.
+- **Explicit check + commit gate** — canonical in Claude Code: the
+  `/check` skill runs the check and calls `markgate set`; a
+  PreToolUse hook on `git commit` calls `markgate verify` to block
+  un-verified commits. Splitting (not `run`) keeps `/check` as an
+  explicit agent action with streaming output in the skill, and
+  keeps the hook a lean gate.
 - **Multi-step checks** — `run -- <cmd>` takes a single command;
   split lets the check stay a plain script (typecheck → lint → build
   → test → `markgate set`) and stops forcing you to collapse
