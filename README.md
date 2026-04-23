@@ -44,7 +44,9 @@ the check directly (husky, lefthook, pre-commit framework, bare
 `pre-commit`).
 
 ```sh
+# .husky/pre-commit (or lefthook.yml, .pre-commit-hooks.yaml, ...):
 markgate run -- make check
+# First hook: make check runs. Next hook with no changes: instant skip.
 ```
 
 **`markgate set` + `markgate verify`** — split. Use when the check
@@ -63,11 +65,12 @@ and the gate live in different places. Concrete scenarios:
   skipping a second run when nothing has changed since the commit.
 
 ```sh
-# Wherever the check runs — record state on success:
+# In your /check skill (or verify script, build.sh, ...):
 make check && markgate set
 
-# Wherever the gate runs — short-circuit on a fresh marker, else re-run:
-markgate verify || make check
+# In .claude/settings.json PreToolUse hook on `git commit`:
+markgate verify
+# exit 0 → commit proceeds; exit 1 → commit blocked, agent re-runs /check.
 ```
 
 Full semantics and exit codes are in [Command model](#command-model).
