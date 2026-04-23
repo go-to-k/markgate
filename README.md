@@ -33,10 +33,9 @@ tests passed in 4.1s
 ```
 
 Under the hood, when a check passes, `markgate` writes a small JSON
-**marker** recording the current repo state. Later calls compare
-current state to the marker — matched → skip; moved (edit, missed
-run, new commit) → shape-specific response (`run` re-runs the
-check; split's `verify` fails and blocks the commit).
+**marker** recording the current repo state. The next hook run exits
+in milliseconds if the state matches, or re-runs the check if it's
+moved.
 
 ## Two shapes: `run` vs `set` + `verify`
 
