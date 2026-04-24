@@ -267,11 +267,14 @@ gates:
 
 Invalidation matrix:
 
-| edit                              | `check` | `docs`  | re-runs needed         |
-|-----------------------------------|---------|---------|------------------------|
-| `tests/**` only                   | stale   | fresh   | fast code check only   |
-| `docs/**` / `README.md` only      | fresh   | stale   | slow docs check only   |
-| `src/**`                          | stale   | stale   | both                   |
+| edit                         | `check` | `docs` | re-runs needed          |
+|------------------------------|---------|--------|-------------------------|
+| `tests/**` only              | stale   | fresh  | fast code check only    |
+| `docs/**` / `README.md` only | fresh   | stale  | slow docs check only    |
+| `src/**`                     | stale   | stale  | both                    |
+| outside both scopes          | fresh   | fresh  | neither — commit passes |
+
+The last row is what makes the idiom scale: edits that land in neither `include` list (CI config, editor settings, hook scripts, tooling dotfiles) keep both markers fresh, so a hook verifying both stays silent when nothing relevant moved. That's only possible because each gate owns its own scope — `hash: files` + per-gate `include` is the primitive that makes it work.
 
 **Commands**:
 
