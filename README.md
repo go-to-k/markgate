@@ -290,7 +290,7 @@ markgate verify check || { echo "run the code check" >&2; exit 1; }
 markgate verify docs  || { echo "run the docs check" >&2; exit 1; }
 ```
 
-A working wire-up — Claude Code `/check` and `/check-docs` skills sharing a single pre-commit hook — lives in [go-to-k/cdkd](https://github.com/go-to-k/cdkd): see [`.markgate.yml`](https://github.com/go-to-k/cdkd/blob/main/.markgate.yml) and [`.claude/hooks/check-gate.sh`](https://github.com/go-to-k/cdkd/blob/main/.claude/hooks/check-gate.sh).
+A working wire-up lives in [go-to-k/cdkd](https://github.com/go-to-k/cdkd): the [`.markgate.yml`](https://github.com/go-to-k/cdkd/blob/main/.markgate.yml) gate definitions, the [`.claude/hooks/check-gate.sh`](https://github.com/go-to-k/cdkd/blob/main/.claude/hooks/check-gate.sh) pre-commit hook, and the Claude Code [`/check`](https://github.com/go-to-k/cdkd/blob/main/.claude/skills/check/SKILL.md) and [`/check-docs`](https://github.com/go-to-k/cdkd/blob/main/.claude/skills/check-docs/SKILL.md) skills that produce the markers (including the diff-based short-circuit `/check-docs` uses to keep the cost low on internal src edits).
 
 ## Install
 
