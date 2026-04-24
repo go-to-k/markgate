@@ -290,7 +290,7 @@ markgate verify check || { echo "run the code check" >&2; exit 1; }
 markgate verify docs  || { echo "run the docs check" >&2; exit 1; }
 ```
 
-A working wire-up — Claude Code `/check` and `/check-docs` skills sharing a single pre-commit hook — is in [go-to-k/cdkd#27](https://github.com/go-to-k/cdkd/pull/27).
+A working wire-up — Claude Code `/check` and `/check-docs` skills sharing a single pre-commit hook — lives in [go-to-k/cdkd](https://github.com/go-to-k/cdkd): see [`.markgate.yml`](https://github.com/go-to-k/cdkd/blob/main/.markgate.yml) and [`.claude/hooks/check-gate.sh`](https://github.com/go-to-k/cdkd/blob/main/.claude/hooks/check-gate.sh).
 
 ## Install
 
