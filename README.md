@@ -242,6 +242,56 @@ go test -cover && markgate set pre-push
 markgate verify pre-push || exit 1
 ```
 
+### 5. Pre-commit: isolate a slow check with its own scoped gate
+
+**Scope**: two gates on the same `git commit` event. `check` covers code artifacts; `docs` covers code **and** documentation. Source files appear in both `include` lists on purpose — a src edit invalidates both gates (forcing both checks), while a tests-only edit invalidates only `check` and a docs-only edit invalidates only `docs`.
+
+Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review. Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
+
+```yaml
+# .markgate.yml
+gates:
+  check:
+    hash: files
+    include:
+      - "src/**"
+      - "tests/**"
+      - "package.json"
+  docs:
+    hash: files
+    include:
+      - "src/**"        # src edits invalidate docs too — see matrix below
+      - "docs/**"
+      - "README.md"
+```
+
+Invalidation matrix:
+
+| edit                         | `check` | `docs` | re-runs needed          |
+|------------------------------|---------|--------|-------------------------|
+| `tests/**` only              | stale   | fresh  | fast code check only    |
+| `docs/**` / `README.md` only | fresh   | stale  | slow docs check only    |
+| `src/**`                     | stale   | stale  | both                    |
+| outside both scopes          | fresh   | fresh  | neither — commit passes |
+
+The last row is what makes the idiom scale: edits that land in neither `include` list (CI config, editor settings, hook scripts, tooling dotfiles) keep both markers fresh, so a hook verifying both stays silent when nothing relevant moved. That's only possible because each gate owns its own scope — `hash: files` + per-gate `include` is the primitive that makes it work.
+
+**Commands**:
+
+```sh
+# Fast code check (src / tests / config):
+pnpm run typecheck && pnpm run lint && pnpm test && markgate set check
+
+# Slow docs consistency check (src / docs / README):
+./scripts/check-docs && markgate set docs
+
+# One pre-commit hook verifies both; the failing gate names itself:
+markgate verify check || { echo "run the code check" >&2; exit 1; }
+markgate verify docs  || { echo "run the docs check" >&2; exit 1; }
+```
+
+A working wire-up lives in [go-to-k/cdkd](https://github.com/go-to-k/cdkd): the [`.markgate.yml`](https://github.com/go-to-k/cdkd/blob/main/.markgate.yml) gate definitions, the [`.claude/hooks/check-gate.sh`](https://github.com/go-to-k/cdkd/blob/main/.claude/hooks/check-gate.sh) pre-commit hook, and the Claude Code [`/check`](https://github.com/go-to-k/cdkd/blob/main/.claude/skills/check/SKILL.md) and [`/check-docs`](https://github.com/go-to-k/cdkd/blob/main/.claude/skills/check-docs/SKILL.md) skills that produce the markers (including the diff-based short-circuit `/check-docs` uses to keep the cost low on internal src edits).
+
 ## Install
 
 ### Homebrew (macOS / Linux)
