@@ -343,7 +343,7 @@ pre-commit:
       run: markgate run -- pnpm test
 ```
 
-**pre-commit framework** — `.pre-commit-hooks.yaml`:
+**pre-commit framework** — `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
