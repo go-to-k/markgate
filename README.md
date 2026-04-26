@@ -216,10 +216,9 @@ not tracked, isolated per worktree.
 ## Configuration
 
 `markgate` works zero-config — what [Basic setup](#basic-setup)
-shows is a single implicit `default` gate with the broad `git-tree`
-hash, and that covers most pre-commit cases. When you want finer
-control, drop a `.markgate.yml` at the repo root (`markgate init`
-writes one):
+shows covers most pre-commit cases. When you want finer control,
+drop a `.markgate.yml` at the repo root (`markgate init` writes
+one):
 
 - **Targeted files** — limit a gate to a specific set of files via
   `hash: files` + `include` globs, so unrelated commits don't
