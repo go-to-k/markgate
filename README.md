@@ -253,9 +253,6 @@ Per-gate fields:
 | `include` | glob list; required for `hash: files` |
 | `exclude` | glob list |
 
-(For `state_dir` — marker storage location, used when sharing
-markers across machines — see [Sharing markers](#sharing-markers-across-machines-ci--teammates).)
-
 Full example:
 
 ```yaml
