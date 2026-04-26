@@ -310,6 +310,21 @@ curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | 
 curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash -s -- v0.1.0
 ```
 
+### mise
+
+Pin a version per repo via [`.mise.toml`](https://mise.jdx.dev/configuration.html):
+
+```toml
+[tools]
+"ubi:go-to-k/markgate" = "0.2.0"
+```
+
+Or one-shot:
+
+```sh
+mise use "ubi:go-to-k/markgate@0.2.0"
+```
+
 ### `go install`
 
 ```sh
