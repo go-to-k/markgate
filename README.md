@@ -1,298 +1,47 @@
 # markgate
 
-`markgate` is a zero-config verification-state cache for hook
-managers (Claude Code hooks, husky, lefthook, pre-commit, bare
-`.git/hooks/*`). Your hooks can:
+A zero-config verification-state cache for hook managers (Claude
+Code, husky, lefthook, pre-commit, bare `.git/hooks/*`) that fires
+the hook **only when your AI coding agent forgot to run the check
+itself** — duplicate runs exit in milliseconds.
 
-- **Skip the checks that already passed** — instant exit when the
-  repo state hasn't changed since the last successful run.
-- **Catch the ones that never ran** — block the commit when the
-  check hasn't been recorded yet.
+## Why this exists
 
-**Especially useful in the AI-coding-agent era.** You tell your
-agent to run the check; sometimes it forgets (context loss, tokens,
-speed pressure) and commits anyway. You add a pre-commit hook to
-enforce it; now every commit runs the check twice — once by the
-agent, once by the hook. `markgate` breaks this dilemma: duplicate
-runs exit instantly, and commits without a fresh check get blocked.
+You tell your coding agent to run `/check` (test, lint, build, doc
+consistency) before committing. **Sometimes it forgets** — context
+loss, token pressure, hurry — and commits anyway.
 
-## 20-second tour
+![Agent forgets the check and commits anyway](docs/images/forgetting-check.png)
 
-```sh
-# First run — nothing cached yet, so `pnpm test` runs and the pass is cached.
-$ markgate run -- pnpm test
-tests passed in 4.2s
+So you add a pre-commit hook to enforce the check. Now every commit
+runs the check twice, once by the agent, once by the hook. Heavy
+checks slow the dev loop; light ones still add up.
 
-# Second run — nothing changed since the last success: instant skip.
-$ markgate run -- pnpm test
+![Skill and hook double-run the check](docs/images/duplicate-execution.png)
 
-# After you edit a file — cache is stale, `pnpm test` runs again.
-$ echo '// fix typo' >> src/foo.ts
-$ markgate run -- pnpm test
-tests passed in 4.1s
+Pulling the check out of the agent and leaving it only in the hook
+isn't the answer — you can't run it before you're ready to commit.
+Per-edit hooks aren't either — they pay the cost on every keystroke.
+
+`markgate` resolves the dilemma: keeping both the check site and
+the hook in place, **the hook fires only when the agent forgets**.
+When the agent ran the check properly, **the hook is skipped** — no
+duplicate execution.
+
+![markgate fires the hook only when the agent forgot](docs/images/markgate-resolves.png)
+
+Adoption is one line — prefix your check command:
+
+```diff
+- pnpm build
++ markgate run -- pnpm build
 ```
 
-Under the hood, when a check passes, `markgate` writes a small JSON
-**marker** recording the current repo state. The next hook run exits
-in milliseconds if the state matches, or re-runs the check if it's
-moved.
-
-## Two shapes: `run` vs `set` + `verify`
-
-Pick by where your hook sits relative to the check.
-
-**`markgate run -- <cmd>`** — one-shot. One command does it all:
-checks the marker, runs `<cmd>` if stale or missing, caches on
-pass (leaves the marker untouched on fail).
-
-- **When**: the hook itself runs the check. Simplest for
-  single-command checks.
-- **Why**: no separate `set` and `verify` to wire — `markgate run`
-  collapses them into one call.
-- **AI forget**: the hook runs the check before the commit (safety
-  net — commit proceeds if the check passes). Same response if
-  files are edited after the check.
-- **How**: prefix your check — `pnpm test` → `markgate run -- pnpm test`.
-
-```sh
-markgate run -- pnpm test
-# pnpm test passes → marker cached, later calls skip instantly.
-# pnpm test fails  → marker unchanged, next call re-runs it.
-```
-
-In Claude Code's JSON hook config:
-
-```json
-// .claude/settings.json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "if": "Bash(git commit*)",
-        "hooks": [
-          { "type": "command", "command": "markgate run -- pnpm test" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-**`markgate set` + `markgate verify`** — split. Two commands:
-`markgate set` records the current state as a marker;
-`markgate verify` compares current state to the marker — exit 0 on match, 1 otherwise.
-
-- **When**: the hook only verifies. Check runs elsewhere (skill /
-  script / CI), ending with `markgate set`.
-- **Why**: check command lives in one place — the hook doesn't
-  duplicate it.
-- **AI forget**: the commit is blocked loudly — no auto-fallback,
-  agent must re-run. Same response if files are edited after
-  `markgate set`.
-- **How**: `markgate set` at the check site, `markgate verify` in
-  the hook (concrete scenarios below).
-
-Concrete scenarios:
-
-- **Explicit check + commit gate** — canonical in Claude Code: the
-  `/check` skill runs the check and calls `markgate set`; a
-  PreToolUse hook on `git commit` calls `markgate verify` to block
-  un-verified commits. Splitting keeps the hook a pure `verify`
-  gate that never runs the check itself.
-- **Multi-step checks** — with `run`, you'd have to repeat the
-  multi-step chain in the hook too. Split lets the chain live only
-  in the script (typecheck → lint → build → test → `markgate set`);
-  the hook stays a single `markgate verify` line.
-- **Commit-then-push** — commit hook: `pnpm test && markgate set`;
-  push hook: `markgate verify`. The two hooks see the same marker,
-  so push skips re-running when nothing has changed since the
-  commit.
-
-```sh
-# /check skill body (or build script, CI job, Make target):
-pnpm run typecheck
-pnpm run lint:fix
-pnpm run build
-pnpm test
-
-# Record the pass; markgate's only addition
-markgate set
-```
-
-Then the hook only verifies the marker:
-
-```json
-// .claude/settings.json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "if": "Bash(git commit*)",
-        "hooks": [
-          { "type": "command", "command": "markgate verify" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Full semantics and exit codes are in [Command model](#command-model).
-Both shapes appear throughout the use cases below.
-
-## Use cases
-
-Each section below follows the same shape: **Scope** (what triggers
-re-verify — a [`hash`](#hashing-strategy-git-tree-vs-files) strategy)
-→ **Commands** (what goes in your shell / hook). The first use case
-works with zero config (default `git-tree` hash, whole repo); the
-rest define scoped `files`-hash gates in
-[`.markgate.yml`](#markgateyml-optional) at the repo root.
-
-### 1. Pre-commit: skip duplicates, catch forgotten checks
-
-**Scope**: anything tracked by git. No config needed (default `git-tree`).
-
-**Commands**:
-
-```sh
-# In your check command:
-pnpm test && markgate set
-
-# In your Claude Code PreToolUse hook on `git commit*`:
-markgate verify
-```
-
-The agent runs `/check`, commits immediately after, and the commit
-hook verifies instantly. Commit without a prior `/check` → hook returns
-1, agent re-runs the check.
-
-### 2. Pre-PR: docs consistency
-
-**Scope**: only `docs/` and `README.md`. Code-only commits don't
-invalidate the marker.
-
-```yaml
-# .markgate.yml
-gates:
-  pre-pr:
-    hash: files
-    include:
-      - "docs/**"
-      - "README.md"
-```
-
-**Commands**:
-
-```sh
-./scripts/check-docs && markgate set pre-pr
-
-# Before `gh pr create`:
-markgate verify pre-pr || {
-  echo "Docs are out of date. Run check-docs." >&2
-  exit 1
-}
-```
-
-### 3. Pre-image-push: vulnerability scan freshness
-
-**Scope**: only files that actually affect the image (Dockerfile +
-lockfiles).
-
-```yaml
-gates:
-  pre-image-push:
-    hash: files
-    include:
-      - "Dockerfile"
-      - "package.json"
-      - "package-lock.json"
-```
-
-**Commands**:
-
-```sh
-trivy image ... && markgate set pre-image-push
-
-# In your `docker push` wrapper:
-markgate verify pre-image-push || exit 1
-```
-
-### 4. Pre-push: coverage report freshness
-
-**Scope**: just source and tests.
-
-```yaml
-gates:
-  pre-push:
-    hash: files
-    include:
-      - "src/**"
-      - "tests/**"
-```
-
-**Commands**:
-
-```sh
-go test -cover && markgate set pre-push
-
-# In .git/hooks/pre-push:
-markgate verify pre-push || exit 1
-```
-
-### 5. Pre-commit: isolate a slow check with its own scoped gate
-
-**Scope**: two gates on the same `git commit` event. `check` covers code artifacts; `docs` covers code **and** documentation. Source files appear in both `include` lists on purpose — a src edit invalidates both gates (forcing both checks), while a tests-only edit invalidates only `check` and a docs-only edit invalidates only `docs`.
-
-Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review. Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
-
-```yaml
-# .markgate.yml
-gates:
-  check:
-    hash: files
-    include:
-      - "src/**"
-      - "tests/**"
-      - "package.json"
-  docs:
-    hash: files
-    include:
-      - "src/**"        # src edits invalidate docs too — see matrix below
-      - "docs/**"
-      - "README.md"
-```
-
-Invalidation matrix:
-
-| edit                         | `check` | `docs` | re-runs needed          |
-|------------------------------|---------|--------|-------------------------|
-| `tests/**` only              | stale   | fresh  | fast code check only    |
-| `docs/**` / `README.md` only | fresh   | stale  | slow docs check only    |
-| `src/**`                     | stale   | stale  | both                    |
-| outside both scopes          | fresh   | fresh  | neither — commit passes |
-
-The last row is what makes the idiom scale: edits that land in neither `include` list (CI config, editor settings, hook scripts, tooling dotfiles) keep both markers fresh, so a hook verifying both stays silent when nothing relevant moved. That's only possible because each gate owns its own scope — `hash: files` + per-gate `include` is the primitive that makes it work.
-
-**Commands**:
-
-```sh
-# Fast code check (src / tests / config):
-pnpm run typecheck && pnpm run lint && pnpm test && markgate set check
-
-# Slow docs consistency check (src / docs / README):
-./scripts/check-docs && markgate set docs
-
-# One pre-commit hook verifies both; the failing gate names itself:
-markgate verify check || { echo "run the code check" >&2; exit 1; }
-markgate verify docs  || { echo "run the docs check" >&2; exit 1; }
-```
-
-A working wire-up lives in [go-to-k/cdkd](https://github.com/go-to-k/cdkd): the [`.markgate.yml`](https://github.com/go-to-k/cdkd/blob/main/.markgate.yml) gate definitions, the [`.claude/hooks/check-gate.sh`](https://github.com/go-to-k/cdkd/blob/main/.claude/hooks/check-gate.sh) pre-commit hook, and the Claude Code [`/check`](https://github.com/go-to-k/cdkd/blob/main/.claude/skills/check/SKILL.md) and [`/check-docs`](https://github.com/go-to-k/cdkd/blob/main/.claude/skills/check-docs/SKILL.md) skills that produce the markers (including the diff-based short-circuit `/check-docs` uses to keep the cost low on internal src edits).
+Drop the same line into the hook, and you're done.
 
 ## Install
+
+> **Note:** `markgate` is meant to run inside a git repository.
 
 ### Homebrew (macOS / Linux)
 
@@ -336,17 +85,382 @@ go install github.com/go-to-k/markgate/cmd/markgate@latest
 Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
 [GitHub Releases](https://github.com/go-to-k/markgate/releases).
 
+## Basic setup
+
+The simplest shape: prefix the check command with `markgate run --`
+in **both** the place that runs it and the hook that enforces it —
+the same one line goes in both spots.
+
+In your check site (a `/check` skill, build script, Make target, …):
+
+```diff
+- pnpm build
++ markgate run -- pnpm build
+```
+
+In your Claude Code `PreToolUse` hook on `git commit*`:
+
+```diff
+// .claude/settings.json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git commit*)",
+        "hooks": [
+-         { "type": "command", "command": "pnpm build" }
++         { "type": "command", "command": "markgate run -- pnpm build" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+**That's it.** When the agent already ran the check, the hook is
+skipped — duplicate runs exit in milliseconds. When the agent
+forgets, the hook runs `pnpm build` itself before the commit goes
+through. Either way, `pnpm build` runs at most once per repo state.
+
+For other hook managers (husky, lefthook, pre-commit framework), the
+shape is identical — see [Drop into your hook manager](#drop-into-your-hook-manager).
+
+For setups where the hook should **only verify** (the check lives
+elsewhere — multi-step script, CI job, separate skill), see
+[Gate pattern](#gate-pattern-set--verify).
+
+## Gate pattern: `set` + `verify`
+
+`markgate run -- <cmd>` is the shortest path, but it requires the
+hook to know how to run the check. When the check is **multi-step,
+lives in a different process, or you want the hook to be a pure
+gate**, split `run` into its two halves:
+
+- `markgate set` — record the current state as a marker (after the
+  check passes elsewhere)
+- `markgate verify` — exit 0 if the marker matches, 1 if not
+
+```sh
+# Wherever the check actually runs (skill, build script, CI, Make):
+pnpm run typecheck
+pnpm run lint:fix
+pnpm run build
+
+# Record the pass; markgate's only addition
+markgate set
+```
+
+Then the hook only verifies the marker:
+
+```json
+// .claude/settings.json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git commit*)",
+        "hooks": [
+          { "type": "command", "command": "markgate verify" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+When this fits better than `run`:
+
+- **Multi-step checks** — with `run`, you'd duplicate the chain
+  (typecheck → lint → build → test) in the hook. Split keeps the
+  chain in the script; the hook stays a single `markgate verify`.
+- **Pure gate hook** — you want the hook to fail-fast on un-verified
+  commits, never run the check itself. The agent (or CI / human)
+  re-runs the check on failure.
+- **Commit-then-push** — commit hook: `pnpm build && markgate set`;
+  push hook: `markgate verify`. Both hooks see the same marker, so
+  push skips re-running when nothing has changed since the commit.
+
+Trade-off vs `run`:
+
+| aspect | `run -- <cmd>` | `set` + `verify` |
+| --- | --- | --- |
+| When the agent forgets | hook runs the check (commit proceeds if it passes) | hook returns 1 — commit blocked, agent must re-run |
+| Multi-step checks | duplicate the chain in the hook | chain stays in one place |
+| Setup cost | one line | two call sites (set + verify) |
+
+## How it works
+
+When `markgate run -- <cmd>` is invoked:
+
+1. It computes a **hash** of the current repo state.
+2. If a saved marker matches, `<cmd>` is skipped (exit 0
+   immediately).
+3. Otherwise `<cmd>` runs. On success, the hash is saved as the new
+   marker. On failure, the marker is left untouched.
+
+```sh
+# First run — nothing cached yet, so `pnpm build` runs and the pass is cached.
+$ markgate run -- pnpm build
+building...
+passed in 7.2s
+
+# Second run — nothing changed since the last success: instant skip.
+$ markgate run -- pnpm build
+
+# After you edit a file — cache is stale, `pnpm build` runs again.
+$ echo '// fix typo' >> src/foo.ts
+$ markgate run -- pnpm build
+building...
+passed in 7.1s
+```
+
+The marker is a small JSON file at
+`$(git rev-parse --git-dir)/markgate/<key>.json` — not committed,
+not tracked, isolated per worktree.
+
+## Configuration
+
+`markgate` works zero-config (the default `git-tree` hash + the
+`default` key handle everything in [Basic setup](#basic-setup)).
+Reach for this section when you want narrower scope, multiple
+gates, or a different hashing strategy.
+
+### `.markgate.yml` (optional)
+
+Only needed for multiple gates, or for `files` hash, or to persist
+include / exclude / state_dir. Looked up at
+`$(git rev-parse --show-toplevel)/.markgate.yml` (no parent-dir
+walking).
+
+`markgate init` writes a starter file at the repo root:
+
+```sh
+markgate init          # writes .markgate.yml at the repo root
+markgate init --force  # overwrite an existing one
+```
+
+The generated file enables the default `git-tree` gate with
+commented-out examples (an `exclude` list on `git-tree`, plus a
+`files`-type gate) — uncomment what you need.
+
+Per-gate fields:
+
+| field | purpose |
+| --- | --- |
+| `hash` | `git-tree` (default) or `files` |
+| `include` | glob list; required for `hash: files` |
+| `exclude` | glob list |
+| `state_dir` | marker storage directory (override per gate). Prefer a **relative** path — it resolves against the repo top-level so it's identical on every machine. An absolute path committed here will point to nonexistent locations on other machines. CLI flag and `MARKGATE_STATE_DIR` still take precedence. |
+
+Full example:
+
+```yaml
+gates:
+  default:
+    hash: git-tree
+    exclude:
+      - "vendor/**"
+      - "node_modules/**"
+
+  pre-pr:
+    hash: files
+    include:
+      - "docs/**"
+      - "README.md"
+    exclude:
+      - "**/*.txt"
+```
+
+### Hashing strategies: `git-tree` vs `files`
+
+The `hash` field above picks one of two strategies:
+
+| aspect | `git-tree` (default) | `files` |
+| --- | --- | --- |
+| What it hashes | `HEAD` + diff-vs-HEAD ∪ untracked-not-ignored | whatever matches your `include` globs |
+| `HEAD` in the hash? | **Yes** | **No** |
+| Commits invalidate the marker? | Yes | Only if they touch in-scope files |
+| `.gitignore` respected? | Yes (automatic) | No — scope is explicit |
+| Needs config? | No | Yes (`include` required) |
+
+When to use which:
+
+- **`git-tree`** = "re-verify on *any* repo change". Broad gates
+  (pre-commit running lint/test/build). Add `exclude` patterns to
+  skip `vendor/`, `node_modules/`, etc. — HEAD-aware invalidation
+  is kept.
+- **`files`** = "re-verify *only* when these paths change, ignore
+  other commits". Narrow gates (docs consistency, vuln scan rooted
+  on a lockfile, coverage for one sub-tree).
+
+Rule of thumb: start with `git-tree` (add `exclude` if needed).
+Reach for `files` only when you specifically want the "ignore
+commits that don't touch these paths" semantics.
+
+### Keys: one repo, multiple gates
+
+Every marker is keyed. The default key is `default` — you only
+think about keys when you want **multiple independent gates** in the
+same repo (e.g. one for `pre-commit`, one for `pre-pr`):
+
+```sh
+markgate set               # same as `markgate set default`
+markgate set pre-pr        # a second, independent gate
+```
+
+Keys must match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII).
+
+## Use cases
+
+Each section follows the same shape: **Scope** (what triggers
+re-verify — a [`hash`](#hashing-strategies-git-tree-vs-files)
+strategy) → **Commands** (what goes in your shell / hook). All
+examples below use scoped `files`-hash gates defined in
+[`.markgate.yml`](#markgateyml-optional) at the repo root, and the
+[Gate pattern](#gate-pattern-set--verify) shape above. (For the
+broad whole-repo `git-tree` shape with no config, see
+[Basic setup](#basic-setup).)
+
+### 1. Pre-PR: docs consistency
+
+**Scope**: only `docs/` and `README.md`. Code-only commits don't
+invalidate the marker.
+
+```yaml
+# .markgate.yml
+gates:
+  pre-pr:
+    hash: files
+    include:
+      - "docs/**"
+      - "README.md"
+```
+
+**Commands**:
+
+```sh
+./scripts/check-docs && markgate set pre-pr
+
+# Before `gh pr create`:
+markgate verify pre-pr || {
+  echo "Docs are out of date. Run check-docs." >&2
+  exit 1
+}
+```
+
+### 2. Pre-image-push: vulnerability scan freshness
+
+**Scope**: only files that actually affect the image (Dockerfile +
+lockfiles).
+
+```yaml
+gates:
+  pre-image-push:
+    hash: files
+    include:
+      - "Dockerfile"
+      - "package.json"
+      - "package-lock.json"
+```
+
+**Commands**:
+
+```sh
+trivy image ... && markgate set pre-image-push
+
+# In your `docker push` wrapper:
+markgate verify pre-image-push || exit 1
+```
+
+### 3. Pre-push: coverage report freshness
+
+**Scope**: just source and tests.
+
+```yaml
+gates:
+  pre-push:
+    hash: files
+    include:
+      - "src/**"
+      - "tests/**"
+```
+
+**Commands**:
+
+```sh
+go test -cover && markgate set pre-push
+
+# In .git/hooks/pre-push:
+markgate verify pre-push || exit 1
+```
+
+### 4. Pre-commit: isolate a slow check with its own scoped gate
+
+**Scope**: two gates on the same `git commit` event. `check` covers code artifacts; `docs` covers code **and** documentation. Source files appear in both `include` lists on purpose — a src edit invalidates both gates (forcing both checks), while a tests-only edit invalidates only `check` and a docs-only edit invalidates only `docs`.
+
+Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review. Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
+
+```yaml
+# .markgate.yml
+gates:
+  check:
+    hash: files
+    include:
+      - "src/**"
+      - "tests/**"
+      - "package.json"
+  docs:
+    hash: files
+    include:
+      - "src/**"        # src edits invalidate docs too — see matrix below
+      - "docs/**"
+      - "README.md"
+```
+
+Invalidation matrix:
+
+| edit                         | `check` | `docs` | re-runs needed          |
+|------------------------------|---------|--------|-------------------------|
+| `tests/**` only              | stale   | fresh  | fast code check only    |
+| `docs/**` / `README.md` only | fresh   | stale  | slow docs check only    |
+| `src/**`                     | stale   | stale  | both                    |
+| outside both scopes          | fresh   | fresh  | neither — commit passes |
+
+The last row is what makes the idiom scale: edits that land in neither `include` list (CI config, editor settings, hook scripts, tooling dotfiles) keep both markers fresh, so a hook verifying both stays silent when nothing relevant moved. That's only possible because each gate owns its own scope — `hash: files` + per-gate `include` is the primitive that makes it work.
+
+**Commands**:
+
+```sh
+# Fast code check (src / tests / config):
+pnpm run typecheck && pnpm run lint && pnpm build && markgate set check
+
+# Slow docs consistency check (src / docs / README):
+./scripts/check-docs && markgate set docs
+
+# One pre-commit hook verifies both; the failing gate names itself:
+markgate verify check || { echo "run the code check" >&2; exit 1; }
+markgate verify docs  || { echo "run the docs check" >&2; exit 1; }
+```
+
+A working wire-up lives in [go-to-k/cdkd](https://github.com/go-to-k/cdkd):
+
+- [`.markgate.yml`](https://github.com/go-to-k/cdkd/blob/main/.markgate.yml) — gate definitions.
+- [`.claude/hooks/check-gate.sh`](https://github.com/go-to-k/cdkd/blob/main/.claude/hooks/check-gate.sh) — pre-commit hook that runs `markgate verify` for each gate.
+- [`/check`](https://github.com/go-to-k/cdkd/blob/main/.claude/skills/check/SKILL.md) and [`/check-docs`](https://github.com/go-to-k/cdkd/blob/main/.claude/skills/check-docs/SKILL.md) skills produce the markers (the latter has a diff-based short-circuit to keep the LLM cost low on internal src edits).
+
 ## Drop into your hook manager
 
-Substitute `pnpm test` with your verification command. When the
-hook runs the check itself, use `run`; when it sits *in front of* a
-separate command, use `verify` and pair it with `set` in the check
-itself (see [Two shapes](#two-shapes-run-vs-set--verify)).
+Substitute `pnpm build` with your verification command. Use
+`markgate run --` when the hook itself runs the check, or
+`markgate verify` when it sits in front of a separate `markgate set`
+(see [Gate pattern](#gate-pattern-set--verify)).
 
 **husky** — `.husky/pre-commit`:
 
 ```sh
-markgate run -- pnpm test
+markgate run -- pnpm build
 ```
 
 **lefthook** — `lefthook.yml`:
@@ -355,7 +469,7 @@ markgate run -- pnpm test
 pre-commit:
   commands:
     check:
-      run: markgate run -- pnpm test
+      run: markgate run -- pnpm build
 ```
 
 **pre-commit framework** — `.pre-commit-config.yaml`:
@@ -366,7 +480,7 @@ repos:
     hooks:
       - id: markgate-check
         name: markgate check
-        entry: markgate run -- pnpm test
+        entry: markgate run -- pnpm build
         language: system
         pass_filenames: false
 ```
@@ -389,8 +503,8 @@ repos:
 }
 ```
 
-In your `/check` skill: `pnpm test && markgate set`. See
-[Use case 1](#1-pre-commit-skip-duplicates-catch-forgotten-checks) for the full flow.
+In your `/check` skill: `pnpm build && markgate set`. See
+[Gate pattern](#gate-pattern-set--verify) for the full flow.
 
 ## Command model
 
@@ -413,10 +527,10 @@ lint, build, tests) that don't fit into a single `<cmd>`:
 
 ```sh
 # Wherever the check runs — record state on success:
-pnpm test && markgate set
+pnpm build && markgate set
 
 # Wherever the gate runs — short-circuit on a fresh marker, else re-run:
-markgate verify || pnpm test
+markgate verify || pnpm build
 ```
 
 ### Exit codes
@@ -429,47 +543,6 @@ naturally:
 | 0    | verified — state matches the marker, safe to skip         |
 | 1    | not verified — no marker, or state differs                |
 | 2    | error — not in a repo, bad config, bad key, etc.          |
-
-## Core concepts
-
-### Key (optional)
-
-Every marker is keyed. You only need to think about keys when you run
-**multiple independent gates** in the same repo (e.g. both `pre-commit`
-and `pre-pr`). Omitted key = `default`, which covers the single-gate
-case.
-
-```sh
-markgate set               # same as `markgate set default`
-markgate set pre-pr        # a second, independent gate
-```
-
-Keys must match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII).
-
-### Hashing strategy: `git-tree` vs `files`
-
-`markgate` ships two hashing strategies:
-
-| | `git-tree` (default) | `files` |
-|---|---|---|
-| What it hashes | `HEAD` + diff-vs-HEAD ∪ untracked-not-ignored | whatever matches your `include` globs |
-| `HEAD` in the hash? | **Yes** | **No** |
-| Commits invalidate the marker? | Yes | Only if they touch in-scope files |
-| `.gitignore` respected? | Yes (automatic) | No — scope is explicit |
-| Needs config? | No | Yes (`include` required) |
-
-They serve different purposes:
-
-- **`git-tree`** = "re-verify on *any* repo change". Broad gates
-  (pre-commit running lint/test/build). Add `exclude` patterns to skip
-  `vendor/`, `node_modules/`, etc. — HEAD-aware invalidation is kept.
-- **`files`** = "re-verify *only* when these paths change, ignore other
-  commits". Narrow gates (docs consistency, vuln scan rooted on a
-  lockfile, coverage for one sub-tree).
-
-Rule of thumb: start with `git-tree` (add `exclude` if needed). Reach
-for `files` only when you specifically want the "ignore commits that
-don't touch these paths" semantics.
 
 ## CLI reference
 
@@ -503,7 +576,7 @@ Flag syntax is identical across hash types. With `--hash files`,
 config file:
 
 ```sh
-markgate run --exclude 'vendor/**' -- pnpm test
+markgate run --exclude 'vendor/**' -- pnpm build
 ```
 
 ### Environment variables
@@ -513,52 +586,6 @@ MARKGATE_STATE_DIR       Marker storage directory. Same effect as
                          --state-dir and state_dir: in config.
                          Precedence: --state-dir > this env >
                          state_dir: in .markgate.yml > default.
-```
-
-## `.markgate.yml` (optional)
-
-Only needed for multiple gates, or for `files` hash, or to persist
-include / exclude / state_dir. Looked up at
-`$(git rev-parse --show-toplevel)/.markgate.yml` (no parent-dir
-walking).
-
-Per-gate fields:
-
-| field | purpose |
-|---|---|
-| `hash` | `git-tree` (default) or `files` |
-| `include` | glob list; required for `hash: files` |
-| `exclude` | glob list |
-| `state_dir` | marker storage directory (override per gate). Prefer a **relative** path — it resolves against the repo top-level so it's identical on every machine. An absolute path committed here will point to nonexistent locations on other machines. CLI flag and `MARKGATE_STATE_DIR` still take precedence. |
-
-### Generate a starter — `markgate init`
-
-```sh
-markgate init          # writes .markgate.yml at the repo root
-markgate init --force  # overwrite an existing one
-```
-
-The generated file enables the default `git-tree` gate with
-commented-out examples (an `exclude` list on `git-tree`, plus a
-`files`-type gate) — uncomment what you need.
-
-### Full example
-
-```yaml
-gates:
-  default:
-    hash: git-tree
-    exclude:
-      - "vendor/**"
-      - "node_modules/**"
-
-  pre-pr:
-    hash: files
-    include:
-      - "docs/**"
-      - "README.md"
-    exclude:
-      - "**/*.txt"
 ```
 
 ## Sharing markers across machines (CI / teammates)
@@ -654,9 +681,8 @@ gitignore is optional on `files`.
 
 #### Step 2. Wire up CI
 
-**Across runs of the same workflow** — `actions/cache`, extending the
-`pre-image-push` gate from
-[Use case 3](#3-pre-image-push-vulnerability-scan-freshness):
+**Across runs of the same workflow** — `actions/cache`, extending
+the `pre-image-push` gate from [Use case 2](#2-pre-image-push-vulnerability-scan-freshness):
 
 ```yaml
 # .github/workflows/scan.yml
@@ -716,8 +742,7 @@ Typical fit: coverage reports, image vulnerability scans — expensive,
 deterministic, and already re-running them on every push is waste
 when nothing in scope changed.
 
-Coverage example (extending the pre-push gate from
-[Use case 4](#4-pre-push-coverage-report-freshness)):
+Coverage example, extending the pre-push gate from [Use case 3](#3-pre-push-coverage-report-freshness):
 
 ```yaml
 # .markgate.yml
@@ -776,6 +801,10 @@ it.
 
 ## FAQ
 
+- **Why not just `git status` in the hook?** `git status` tells you
+  the tree is clean, not "did the check pass against this exact
+  state." `markgate` records the success itself, so a passed check
+  stays valid across hook invocations until something moves.
 - **Does it work in git worktrees?** Yes. Markers live under each
   worktree's own `.git/` dir, so they don't leak across worktrees.
   (This isolation is lost if you point `--state-dir` at a shared
