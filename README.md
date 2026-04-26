@@ -240,8 +240,8 @@ markgate init          # writes .markgate.yml at the repo root
 markgate init --force  # overwrite an existing one
 ```
 
-The generated file enables the default `git-tree` gate with
-commented-out examples (an `exclude` list on `git-tree`, plus a
+The generated file enables the `default` gate with `git-tree` hash,
+plus commented-out examples (an `exclude` list on `git-tree` and a
 `files`-type gate) — uncomment what you need.
 
 Per-gate fields:
@@ -251,6 +251,7 @@ Per-gate fields:
 | `hash` | `git-tree` (default) or `files` |
 | `include` | glob list; required for `hash: files` |
 | `exclude` | glob list |
+| `state_dir` | optional override of marker storage location — see [Sharing markers](#sharing-markers-across-machines-ci--teammates) |
 
 Full example:
 
@@ -594,10 +595,10 @@ all work with the default.
 
 Read on if you want a check to **skip in CI (or on a teammate's
 machine) based on a run that already happened elsewhere**. Typical
-wins: coverage, vulnerability scan, e2e, image build — expensive and
-deterministic, redundant to re-run. Don't use it for security
-boundaries (supply-chain audit, permission scan); those should stay
-fresh in CI.
+wins: coverage, vulnerability scan, e2e, image build — expensive
+and deterministic, redundant to re-run. Trust model differs by
+pattern (see [Two patterns at a glance](#two-patterns-at-a-glance)
+below); pick the one that matches your trust assumptions.
 
 ### Specifying a non-default location
 
@@ -767,7 +768,7 @@ markgate verify coverage || go test -cover ./...
 Trust model: anyone with commit access can forge a skip. Use committed
 markers where commit-access already implies trust in the signal.
 
-### Notes
+### Caveats
 
 - **Worktree isolation is lost** when the dir is shared across
   worktrees pointing at the same location. The default `.git/`-based
