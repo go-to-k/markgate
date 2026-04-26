@@ -209,9 +209,8 @@ building...
 passed in 7.1s
 ```
 
-The marker is a small JSON file at
-`$(git rev-parse --git-dir)/markgate/<key>.json` — not committed,
-not tracked, isolated per worktree.
+The marker is a small JSON file under `.git/markgate/` — not
+committed, not tracked, isolated per worktree.
 
 ## Scoped gates
 
@@ -221,8 +220,8 @@ drop a `.markgate.yml` at the repo root (`markgate init` writes
 one):
 
 - **Targeted files** — limit a gate to a specific set of files via
-  `hash: files` + `include` globs, so unrelated commits don't
-  invalidate the marker
+  [`hash: files`](#hashing-strategies-git-tree-vs-files) + `include`
+  globs, so unrelated commits don't invalidate the marker
 - **Multiple gates** — define independent named gates in one repo
   and run them in parallel (e.g. one for pre-commit, one for pre-PR)
 
@@ -811,10 +810,12 @@ it.
 - **Do I need to gitignore anything?** No for the default layout —
   markers are under `.git/`. If you use `--state-dir` pointing inside
   the repo, gitignore that directory.
-- **What if I don't want HEAD in the hash?** Use `hash: files` for
-  that gate.
-- **Does `files` respect `.gitignore`?** No. `files` is explicit scope
-  by design. Use `git-tree` when you want `.gitignore`-aware behavior.
+- **What if I don't want HEAD in the hash?** Use
+  [`hash: files`](#hashing-strategies-git-tree-vs-files) for that
+  gate.
+- **Does `files` respect `.gitignore`?** No. `files` is explicit
+  scope by design. Use `git-tree` when you want `.gitignore`-aware
+  behavior. (See [Hashing strategies](#hashing-strategies-git-tree-vs-files).)
 - **Can markers be shared across machines / CI?** Yes, via
   `--state-dir`, `MARKGATE_STATE_DIR`, or `state_dir:` in
   `.markgate.yml`. See
