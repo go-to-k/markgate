@@ -193,6 +193,9 @@ When `markgate run -- <cmd>` is invoked:
 3. Otherwise `<cmd>` runs. On success, the hash is saved as the new
    marker. On failure, the marker is left untouched.
 
+(For the split shape, `markgate set` writes step 3's marker;
+`markgate verify` does step 2's match check.)
+
 ```sh
 # First run — nothing cached yet, so `pnpm build` runs and the pass is cached.
 $ markgate run -- pnpm build
@@ -209,8 +212,13 @@ building...
 passed in 7.1s
 ```
 
-The marker is a small JSON file under `.git/markgate/` — not
-committed, not tracked, isolated per worktree.
+The marker is a small JSON file under `.git/markgate/`, one per
+gate (the file name matches the gate name, e.g. `default.json`).
+Not committed, not tracked, isolated per worktree. With
+`--state-dir <dir>`, `MARKGATE_STATE_DIR=<dir>`, or `state_dir:`
+in `.markgate.yml`, markers go to `<dir>/` instead — see [Sharing
+markers](#sharing-markers-across-machines-ci--teammates). The
+on-disk JSON layout is an implementation detail; don't parse it.
 
 ## Scoped gates
 
@@ -775,24 +783,6 @@ markers where commit-access already implies trust in the signal.
 - **Signing is not yet implemented** — markers are unsigned JSON.
   Tamper resistance depends on who can write to the directory (cache /
   repo).
-
-## Marker storage
-
-Markers live at:
-
-```text
-$(git rev-parse --git-dir)/markgate/<key>.json
-```
-
-Inside `.git/`, so no gitignore entry is needed and worktrees stay
-isolated. With `--state-dir <dir>`, `MARKGATE_STATE_DIR=<dir>`, or
-`state_dir:` in `.markgate.yml`, the location becomes `<dir>/<key>.json`
-instead — see
-[Sharing markers](#sharing-markers-across-machines-ci--teammates). The on-disk
-JSON layout is an implementation detail — the fields (including
-`version`, which is an internal schema marker) exist only for
-debugging and may change between releases without notice. Don't parse
-it.
 
 ## FAQ
 
