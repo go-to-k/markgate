@@ -522,16 +522,13 @@ returned as-is.
 
 ### `markgate set` / `markgate verify` (split)
 
-Reach for these two halves when the check and the gate run in
-different places, or when the check is several steps (typecheck,
-lint, build, tests) that don't fit into a single `<cmd>`:
+The two halves of `run`. See
+[Gate pattern](#gate-pattern-set--verify) for when to use the split
+shape.
 
 ```sh
-# Wherever the check runs — record state on success:
-pnpm build && markgate set
-
-# Wherever the gate runs — short-circuit on a fresh marker, else re-run:
-markgate verify || pnpm build
+pnpm build && markgate set    # record state on success
+markgate verify || pnpm build # short-circuit if marker fresh, else re-run
 ```
 
 ### Exit codes
