@@ -272,6 +272,10 @@ gates:
       - "**/*.txt"
 ```
 
+Each gate's key (the YAML map key — `default`, `pre-pr` above) must
+match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII). `default` is what
+`markgate set` / `verify` use when no key argument is given.
+
 ### Hashing strategies: `git-tree` vs `files`
 
 The `hash` field above picks one of two strategies:
@@ -297,19 +301,6 @@ When to use which:
 Rule of thumb: start with `git-tree` (add `exclude` if needed).
 Reach for `files` only when you specifically want the "ignore
 commits that don't touch these paths" semantics.
-
-### Keys: one repo, multiple gates
-
-Every marker is keyed. The default key is `default` — you only
-think about keys when you want **multiple independent gates** in the
-same repo (e.g. one for `pre-commit`, one for `pre-pr`):
-
-```sh
-markgate set               # same as `markgate set default`
-markgate set pre-pr        # a second, independent gate
-```
-
-Keys must match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII).
 
 ## Use cases
 
