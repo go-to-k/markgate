@@ -274,7 +274,12 @@ gates:
 
 Each gate's key (the YAML map key — `default`, `pre-pr` above) must
 match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII). `default` is what
-`markgate set` / `verify` use when no key argument is given.
+`markgate set` / `verify` use when no key argument is given:
+
+```sh
+markgate set               # same as `markgate set default`
+markgate set pre-pr        # a second, independent gate
+```
 
 ### Hashing strategies: `git-tree` vs `files`
 
