@@ -229,7 +229,7 @@ one):
 Combined, these give you **scoped gates**: "re-run this check only
 when these files change."
 
-### `.markgate.yml` (optional)
+### `.markgate.yml`
 
 Lives at `$(git rev-parse --show-toplevel)/.markgate.yml` (no
 parent-dir walking).
@@ -318,7 +318,7 @@ Each section follows the same shape: **Scope** (what triggers
 re-verify — a [`hash`](#hashing-strategies-git-tree-vs-files)
 strategy) → **Commands** (what goes in your shell / hook). All
 examples below use scoped `files`-hash gates defined in
-[`.markgate.yml`](#markgateyml-optional) at the repo root, and the
+[`.markgate.yml`](#markgateyml) at the repo root, and the
 [Gate pattern](#gate-pattern-set--verify) shape above. (For the
 broad whole-repo `git-tree` shape with no config, see
 [Basic setup](#basic-setup).)
