@@ -230,8 +230,9 @@ one):
 - **Targeted files** — limit a gate to a specific set of files via
   [`hash: files`](#hashing-strategies-git-tree-vs-files) + `include`
   globs, so unrelated commits don't invalidate the marker
-- **Multiple gates** — define independent named gates in one repo
-  and run them in parallel (e.g. one for pre-commit, one for pre-PR)
+- **Multiple gates** — define independent named gates in one repo,
+  each tracking its own scope (e.g. one for pre-commit, one for
+  pre-PR)
 
 Combined, these give you **scoped gates**: "re-run this check only
 when these files change."
@@ -513,14 +514,11 @@ In your `/check` skill: `pnpm build && markgate set`. See
 
 ### `markgate run -- <cmd>` (one-shot)
 
-Collapses verify → run → set into one invocation:
-
-1. **verify** — if the marker matches, `<cmd>` is not executed; exit 0
-   immediately.
-2. Otherwise **execute `<cmd>`**. stdio is passed through;
-   `SIGINT` / `SIGTERM` are forwarded to the child.
-3. On success, **set** the marker. On failure, the marker is **not**
-   updated and `<cmd>`'s exit code is returned as-is.
+Collapses verify → run → set into one invocation (see
+[How it works](#how-it-works) for the mechanism). stdio is passed
+through; `SIGINT` / `SIGTERM` are forwarded to `<cmd>`. On `<cmd>`
+failure, the marker is **not** updated and `<cmd>`'s exit code is
+returned as-is.
 
 ### `markgate set` / `markgate verify` (split)
 
@@ -625,7 +623,7 @@ Both use `--state-dir` / `state_dir`; the difference is whether the
 marker is **committed** to the repo.
 
 | aspect | **A. Not committed** (CI cache / artifact) | **B. Committed** |
-|---|---|---|
+| --- | --- | --- |
 | Marker in the repo? | No (typically gitignored, or outside the repo) | Yes, tracked in git |
 | Works with hash type | `git-tree` or `files` | **`files` only** — committing with `git-tree` breaks: the commit changes HEAD → digest is instantly stale |
 | Local → CI sharing | Needs CI cache / artifact / shared volume | Just `git push` |
