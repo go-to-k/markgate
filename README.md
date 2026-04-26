@@ -253,7 +253,7 @@ Per-gate fields:
 | `exclude` | glob list |
 | `state_dir` | optional override of marker storage location — see [Sharing markers](#sharing-markers-across-machines-ci--teammates) |
 
-Full example:
+Example:
 
 ```yaml
 gates:
