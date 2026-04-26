@@ -175,20 +175,13 @@ When this fits better than `run`:
 - **Multi-step checks** — with `run`, you'd duplicate the chain
   (typecheck → lint → build → test) in the hook. Split keeps the
   chain in the script; the hook stays a single `markgate verify`.
-- **Pure gate hook** — you want the hook to fail-fast on un-verified
-  commits, never run the check itself. The agent (or CI / human)
-  re-runs the check on failure.
+- **Pure gate hook** — the hook fails fast on un-verified commits
+  without running the check itself, handing control back to the
+  agent which can re-run the check on its own without further
+  prompting.
 - **Commit-then-push** — commit hook: `pnpm build && markgate set`;
   push hook: `markgate verify`. Both hooks see the same marker, so
   push skips re-running when nothing has changed since the commit.
-
-Trade-off vs `run`:
-
-| aspect | `run -- <cmd>` | `set` + `verify` |
-| --- | --- | --- |
-| When the agent forgets | hook runs the check (commit proceeds if it passes) | hook returns 1 — commit blocked, agent must re-run |
-| Multi-step checks | duplicate the chain in the hook | chain stays in one place |
-| Setup cost | one line | two call sites (set + verify) |
 
 ## How it works
 
