@@ -252,7 +252,9 @@ Per-gate fields:
 | `hash` | `git-tree` (default) or `files` |
 | `include` | glob list; required for `hash: files` |
 | `exclude` | glob list |
-| `state_dir` | marker storage directory (override per gate). Prefer a **relative** path — it resolves against the repo top-level so it's identical on every machine. An absolute path committed here will point to nonexistent locations on other machines. CLI flag and `MARKGATE_STATE_DIR` still take precedence. |
+
+(For `state_dir` — marker storage location, used when sharing
+markers across machines — see [Sharing markers](#sharing-markers-across-machines-ci--teammates).)
 
 Full example:
 
