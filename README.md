@@ -213,7 +213,7 @@ The marker is a small JSON file at
 `$(git rev-parse --git-dir)/markgate/<key>.json` — not committed,
 not tracked, isolated per worktree.
 
-## Configuration
+## Scoped gates
 
 `markgate` works zero-config — what [Basic setup](#basic-setup)
 shows covers most pre-commit cases. When you want finer control,
