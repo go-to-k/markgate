@@ -222,17 +222,24 @@ not tracked, isolated per worktree.
 
 ## Configuration
 
-`markgate` works zero-config (the default `git-tree` hash + the
-`default` key handle everything in [Basic setup](#basic-setup)).
-Reach for this section when you want narrower scope, multiple
-gates, or a different hashing strategy.
+So far you've been using a single implicit `default` gate with the
+broad `git-tree` hash (everything in [Basic setup](#basic-setup)).
+With a `.markgate.yml` at the repo root (`markgate init` writes
+one), you can manage gate scope more finely:
+
+- **Targeted files** — limit a gate to a specific set of files via
+  `hash: files` + `include` globs, so unrelated commits don't
+  invalidate the marker
+- **Multiple gates** — define independent named gates in one repo
+  and run them in parallel (e.g. one for pre-commit, one for pre-PR)
+
+Combined, these give you **scoped gates**: "re-run this check only
+when these files change."
 
 ### `.markgate.yml` (optional)
 
-Only needed for multiple gates, or for `files` hash, or to persist
-include / exclude / state_dir. Looked up at
-`$(git rev-parse --show-toplevel)/.markgate.yml` (no parent-dir
-walking).
+Lives at `$(git rev-parse --show-toplevel)/.markgate.yml` (no
+parent-dir walking).
 
 `markgate init` writes a starter file at the repo root:
 
