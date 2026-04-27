@@ -316,6 +316,36 @@ Rule of thumb: start with `git-tree` (add `exclude` if needed).
 Reach for `files` only when you specifically want the "ignore
 commits that don't touch these paths" semantics.
 
+## Enforcing AI checks that aren't commands
+
+Hooks can only execute commands, so on their own they enforce only **mechanical** checks (lint, tests, build). Reviews that need AI judgment — naming consistency with existing symbols, idiomatic style, "does the PR description match the diff?" — can't be reduced to a command. Linters catch snake_case violations, but "is this name semantically clear and consistent with the rest of the package?" isn't a regex. Without markgate, hooks can't gate on these.
+
+markgate gives the hook a grip. The AI skill that performs the review ends in `markgate set`; the hook runs `markgate verify`. When the agent forgets the skill, the marker is stale, the hook blocks, and the agent is pointed back at the skill.
+
+Scope the gate to src so the AI re-judges only when source files change:
+
+```yaml
+# .markgate.yml
+gates:
+  ai-naming:
+    hash: files
+    include:
+      - "src/**"
+```
+
+```sh
+# At the end of /check-naming (Claude Code skill):
+markgate set ai-naming
+
+# In a pre-commit hook (.claude/settings.json, PreToolUse on git commit*):
+markgate verify ai-naming || {
+  echo "Run /check-naming before committing." >&2
+  exit 1
+}
+```
+
+Why the agent can't trivially bypass it: `markgate set` lives at the end of the skill body, so an agent told to run `/check-naming` would have to skip the skill *and* call `markgate set` directly — more work than just running the skill. The skill is the discipline; the hook is the enforcement.
+
 ## Use cases
 
 Each section follows the same shape: **Scope** (what triggers
@@ -400,43 +430,11 @@ go test -cover && markgate set pre-push
 markgate verify pre-push || exit 1
 ```
 
-### 4. Pre-commit: enforce AI checks that aren't commands
-
-**Scope**: just src — the AI re-judges when source files change.
-
-```yaml
-# .markgate.yml
-gates:
-  ai-naming:
-    hash: files
-    include:
-      - "src/**"
-```
-
-Hooks can only execute commands, so on their own they enforce only **mechanical** checks (lint, tests, build). Reviews that need AI judgment — naming consistency with existing symbols, idiomatic style, "does the PR description match the diff?" — can't be reduced to a command. Linters catch snake_case violations, but "is this name semantically clear and consistent with the rest of the package?" isn't a regex. Without markgate, hooks can't gate on these.
-
-markgate gives the hook a grip. The AI skill that performs the review ends in `markgate set`; the hook runs `markgate verify`. When the agent forgets the skill, the marker is stale, the hook blocks, and the agent is pointed back at the skill.
-
-**Commands**:
-
-```sh
-# At the end of /check-naming (Claude Code skill):
-markgate set ai-naming
-
-# In a pre-commit hook (.claude/settings.json, PreToolUse on git commit*):
-markgate verify ai-naming || {
-  echo "Run /check-naming before committing." >&2
-  exit 1
-}
-```
-
-Why the agent can't trivially bypass it: `markgate set` lives at the end of the skill body, so an agent told to run `/check-naming` would have to skip the skill *and* call `markgate set` directly — more work than just running the skill. The skill is the discipline; the hook is the enforcement.
-
-### 5. Pre-commit: isolate a slow check with its own scoped gate
+### 4. Pre-commit: isolate a slow check with its own scoped gate
 
 **Scope**: two gates on the same `git commit` event. `check` covers code artifacts; `docs` covers code **and** documentation. Source files appear in both `include` lists on purpose — a src edit invalidates both gates (forcing both checks), while a tests-only edit invalidates only `check` and a docs-only edit invalidates only `docs`.
 
-Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review (same shape as [Use case 4](#4-pre-commit-enforce-ai-checks-that-arent-commands), different scope). Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
+Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review (same shape as [Enforcing AI checks that aren't commands](#enforcing-ai-checks-that-arent-commands), different scope). Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
 
 ```yaml
 # .markgate.yml
