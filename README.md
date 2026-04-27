@@ -422,7 +422,7 @@ markgate verify pre-push || exit 1
 
 **Scope**: two gates on the same `git commit` event. `check` covers code artifacts; `docs` covers code **and** documentation. Source files appear in both `include` lists on purpose — a src edit invalidates both gates (forcing both checks), while a tests-only edit invalidates only `check` and a docs-only edit invalidates only `docs`.
 
-Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review (see [Enforcing AI checks that aren't commands](#enforcing-ai-checks-that-arent-commands)). Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
+Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review. Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
 
 ```yaml
 # .markgate.yml
