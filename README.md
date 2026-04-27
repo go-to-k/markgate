@@ -400,7 +400,7 @@ go test -cover && markgate set pre-push
 markgate verify pre-push || exit 1
 ```
 
-### 4. Pre-commit: AI-judgment checks
+### 4. Pre-commit: enforce AI checks that aren't commands
 
 **Scope**: src + docs + README — the AI re-judges only when something in those scopes changes.
 
@@ -438,7 +438,7 @@ Why the agent can't trivially bypass it: `markgate set` lives at the end of the 
 
 **Scope**: two gates on the same `git commit` event. `check` covers code artifacts; `docs` covers code **and** documentation. Source files appear in both `include` lists on purpose — a src edit invalidates both gates (forcing both checks), while a tests-only edit invalidates only `check` and a docs-only edit invalidates only `docs`.
 
-Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review (see [Use case 4](#4-pre-commit-ai-judgment-checks)). Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
+Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review (see [Use case 4](#4-pre-commit-enforce-ai-checks-that-arent-commands)). Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
 
 ```yaml
 # .markgate.yml
