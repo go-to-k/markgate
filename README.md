@@ -143,9 +143,9 @@ gate**, split `run` into its two halves:
 
 ```sh
 # Wherever the check actually runs (skill, build script, CI, Make):
-pnpm run typecheck
-pnpm run lint:fix
-pnpm run build
+pnpm typecheck
+pnpm lint:fix
+pnpm build
 
 # Record the pass; markgate's only addition
 markgate set
@@ -438,7 +438,7 @@ The last row is what makes the idiom scale: edits that land in neither `include`
 
 ```sh
 # Fast code check (src / tests / config):
-pnpm run typecheck && pnpm run lint && pnpm build && markgate set check
+pnpm typecheck && pnpm lint && pnpm build && markgate set check
 
 # Slow docs consistency check (src / docs / README):
 ./scripts/check-docs && markgate set docs
