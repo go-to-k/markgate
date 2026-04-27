@@ -400,7 +400,7 @@ go test -cover && markgate set pre-push
 markgate verify pre-push || exit 1
 ```
 
-### 4. Pre-commit: AI-judgment checks (non-scriptable reviews)
+### 4. Pre-commit: AI-judgment checks
 
 **Scope**: src + docs + README — the AI re-judges only when something in those scopes changes.
 
@@ -415,7 +415,7 @@ gates:
       - "README.md"
 ```
 
-Hooks can only execute scripts, so on their own they enforce only **mechanical** checks (lint, tests, build). Reviews that need AI judgment — doc consistency with src, naming consistency, "does the PR description match the diff?" — aren't scriptable. Without markgate, hooks can't gate on them.
+Hooks can only execute commands, so on their own they enforce only **mechanical** checks (lint, tests, build). Reviews that need AI judgment — doc consistency with src, naming consistency, "does the PR description match the diff?" — can't be reduced to a command. Without markgate, hooks can't gate on them.
 
 markgate gives the hook a grip. The AI skill that performs the review ends in `markgate set`; the hook runs `markgate verify`. When the agent forgets the skill, the marker is stale, the hook blocks, and the agent is pointed back at the skill.
 
@@ -438,7 +438,7 @@ Why the agent can't trivially bypass it: `markgate set` lives at the end of the 
 
 **Scope**: two gates on the same `git commit` event. `check` covers code artifacts; `docs` covers code **and** documentation. Source files appear in both `include` lists on purpose — a src edit invalidates both gates (forcing both checks), while a tests-only edit invalidates only `check` and a docs-only edit invalidates only `docs`.
 
-Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review (see [Use case 4](#4-pre-commit-ai-judgment-checks-non-scriptable-reviews)). Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
+Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review (see [Use case 4](#4-pre-commit-ai-judgment-checks)). Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
 
 ```yaml
 # .markgate.yml
