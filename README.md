@@ -220,6 +220,24 @@ in `.markgate.yml`, markers go to `<dir>/` instead — see [Sharing
 markers](#sharing-markers-across-machines-ci--teammates). The
 on-disk JSON layout is an implementation detail; don't parse it.
 
+## Enforcing AI checks that aren't commands
+
+Hooks can only execute commands, so on their own they enforce only **mechanical** checks (lint, tests, build). Reviews that need AI judgment — docs consistency with src, naming consistency with existing symbols, "does the PR description match the diff?" — can't be reduced to a command. The mechanical layer can spot a typo or a bad import, but "are these docs still in sync with what the code does?" isn't a regex. Without markgate, hooks can't gate on these.
+
+markgate gives the hook a grip. The AI skill that performs the review ends in `markgate set`; the hook runs `markgate verify`. When the agent forgets the skill, the marker is stale, the hook blocks, and the agent is pointed back at the skill.
+
+```sh
+# At the end of /check-docs (Claude Code skill body):
+markgate set
+
+# In a pre-commit hook (.claude/settings.json, PreToolUse on git commit*):
+markgate verify || { echo "Run /check-docs before committing." >&2; exit 1; }
+```
+
+Why the agent can't trivially bypass it: `markgate set` lives at the end of the skill body, so an agent told to run `/check-docs` would have to skip the skill *and* call `markgate set` directly — more work than just running the skill. The skill is the discipline; the hook is the enforcement.
+
+To narrow the trigger so the marker invalidates only when specific files change — e.g. re-judge docs only when `docs/**` or `src/**` move — see [Scoped gates](#scoped-gates) below.
+
 ## Scoped gates
 
 `markgate` works zero-config — what [Basic setup](#basic-setup)
