@@ -400,11 +400,45 @@ go test -cover && markgate set pre-push
 markgate verify pre-push || exit 1
 ```
 
-### 4. Pre-commit: isolate a slow check with its own scoped gate
+### 4. Pre-commit: AI-judgment checks (non-scriptable reviews)
+
+**Scope**: src + docs + README — the AI re-judges only when something in those scopes changes. (Swap to `git-tree` if any commit should re-trigger the review.)
+
+```yaml
+# .markgate.yml
+gates:
+  ai-docs:
+    hash: files
+    include:
+      - "src/**"
+      - "docs/**"
+      - "README.md"
+```
+
+Hooks can only execute scripts, so on their own they enforce only **mechanical** checks (lint, tests, build). Reviews that need AI judgment — doc consistency with src, naming consistency, "does the PR description match the diff?" — aren't scriptable. Without markgate, hooks can't gate on them.
+
+markgate gives the hook a grip. The AI skill that performs the review ends in `markgate set`; the hook runs `markgate verify`. When the agent forgets the skill, the marker is stale, the hook blocks, and the agent is pointed back at the skill.
+
+**Commands**:
+
+```sh
+# At the end of /check-docs (Claude Code skill):
+markgate set ai-docs
+
+# In a pre-commit hook (.claude/settings.json, PreToolUse on git commit*):
+markgate verify ai-docs || {
+  echo "Run /check-docs before committing." >&2
+  exit 1
+}
+```
+
+Why the agent can't trivially bypass it: `markgate set` lives at the end of the skill body, so an agent told to run `/check-docs` would have to skip the skill *and* call `markgate set` directly — more work than just running the skill. The skill is the discipline; the hook is the enforcement.
+
+### 5. Pre-commit: isolate a slow check with its own scoped gate
 
 **Scope**: two gates on the same `git commit` event. `check` covers code artifacts; `docs` covers code **and** documentation. Source files appear in both `include` lists on purpose — a src edit invalidates both gates (forcing both checks), while a tests-only edit invalidates only `check` and a docs-only edit invalidates only `docs`.
 
-Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review. Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
+Useful when one pre-commit check is much slower than the others — typically an LLM-judged "are the docs still consistent with src?" review (see [Use case 4](#4-pre-commit-ai-judgment-checks-non-scriptable-reviews)). Bundling it into the fast code check would force every tests-only or bug-fix commit to pay the doc-review cost. Splitting it into its own scoped gate means each edit only pays for the scope it actually invalidated.
 
 ```yaml
 # .markgate.yml
