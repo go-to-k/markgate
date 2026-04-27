@@ -402,7 +402,7 @@ markgate verify pre-push || exit 1
 
 ### 4. Pre-commit: AI-judgment checks (non-scriptable reviews)
 
-**Scope**: src + docs + README — the AI re-judges only when something in those scopes changes. (Swap to `git-tree` if any commit should re-trigger the review.)
+**Scope**: src + docs + README — the AI re-judges only when something in those scopes changes.
 
 ```yaml
 # .markgate.yml
