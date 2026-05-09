@@ -724,6 +724,19 @@ markgate completion <shell>            Emit a completion script (bash / zsh / fi
 files currently in scope to stderr (with `--json` for a structured
 form on stdout). See [Debugging a stale gate](#debugging-a-stale-gate).
 
+> When a gate sets [`ttl:`](#wall-clock-expiry-ttl), `verify` is no
+> longer a pure function of the file tree — it also depends on the
+> wall clock, returning mismatch once `now - marker.created_at >
+> ttl` even if the digest still matches.
+>
+> `markgate run --explain --json` is only stdout-clean on the skip
+> path (when the gate matches). On mismatch the child runs with
+> `Stdout = os.Stdout`, so its output concatenates after the JSON
+> object and `jq` will choke. Use plain `--explain` (text form,
+> stderr) when you want explain output alongside a real run, or
+> compose with `markgate verify <key> --explain --json` ahead of
+> the child.
+
 ### `markgate status` (bare): list all gates
 
 Without a `[key]`, `markgate status` prints one row per known gate —

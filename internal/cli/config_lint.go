@@ -84,16 +84,19 @@ func runConfigLint(out io.Writer, jsonOut bool) error {
 	}
 
 	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil {
+	if err = yaml.Unmarshal(data, &root); err != nil {
 		return &ExitError{Code: 2, Err: fmt.Errorf("parse %s: %w", config.Filename, err)}
 	}
 
 	var cfg config.Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err = yaml.Unmarshal(data, &cfg); err != nil {
 		return &ExitError{Code: 2, Err: fmt.Errorf("parse %s: %w", config.Filename, err)}
 	}
 
-	findings := collectFindings(top, &root, &cfg)
+	findings, err := collectFindings(top, &root, &cfg)
+	if err != nil {
+		return &ExitError{Code: 2, Err: err}
+	}
 	sortFindings(findings)
 
 	if jsonOut {
@@ -111,11 +114,17 @@ func runConfigLint(out io.Writer, jsonOut bool) error {
 }
 
 // collectFindings walks the YAML tree for unknown keys and the typed
-// config for dead include/exclude globs, returning the merged warning set.
-func collectFindings(topLevel string, root *yaml.Node, cfg *config.Config) []lintFinding {
+// config for dead include/exclude globs, returning the merged warning
+// set. A non-nil error means a glob pattern was malformed (config
+// error, not finding) — caller surfaces it as exit 2.
+func collectFindings(topLevel string, root *yaml.Node, cfg *config.Config) ([]lintFinding, error) {
 	findings := unknownFieldFindings(root)
-	findings = append(findings, deadGlobFindings(topLevel, cfg)...)
-	return findings
+	dead, err := deadGlobFindings(topLevel, cfg)
+	if err != nil {
+		return nil, err
+	}
+	findings = append(findings, dead...)
+	return findings, nil
 }
 
 // unknownFieldFindings reports keys that are not defined on Config or Gate.
@@ -178,8 +187,11 @@ func unknownGateFieldFindings(gates *yaml.Node) []lintFinding {
 // the working tree. The check expands each pattern against the FS so
 // typos (`docss/**`) and patterns left over after refactors surface
 // immediately rather than waiting for someone to notice the gate has
-// stopped invalidating.
-func deadGlobFindings(topLevel string, cfg *config.Config) []lintFinding {
+// stopped invalidating. A glob with malformed syntax (unmatched
+// bracket, etc.) is a config error, not a finding — surface it as
+// an error so the lint command exits 2 rather than silently passing
+// the broken pattern.
+func deadGlobFindings(topLevel string, cfg *config.Config) ([]lintFinding, error) {
 	var out []lintFinding
 	names := make([]string, 0, len(cfg.Gates))
 	for name := range cfg.Gates {
@@ -189,8 +201,12 @@ func deadGlobFindings(topLevel string, cfg *config.Config) []lintFinding {
 	for _, name := range names {
 		g := cfg.Gates[name]
 		for i, pat := range g.Include {
-			if dead, _ := isDeadGlob(topLevel, pat); dead {
-				path := fmt.Sprintf("gates.%s.include[%d]", name, i)
+			path := fmt.Sprintf("gates.%s.include[%d]", name, i)
+			matches, err := hasher.MatchGlob(topLevel, pat)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", path, err)
+			}
+			if len(matches) == 0 {
 				out = append(out, lintFinding{
 					Path:     path,
 					Severity: "warning",
@@ -199,8 +215,12 @@ func deadGlobFindings(topLevel string, cfg *config.Config) []lintFinding {
 			}
 		}
 		for i, pat := range g.Exclude {
-			if dead, _ := isDeadGlob(topLevel, pat); dead {
-				path := fmt.Sprintf("gates.%s.exclude[%d]", name, i)
+			path := fmt.Sprintf("gates.%s.exclude[%d]", name, i)
+			matches, err := hasher.MatchGlob(topLevel, pat)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", path, err)
+			}
+			if len(matches) == 0 {
 				out = append(out, lintFinding{
 					Path:     path,
 					Severity: "warning",
@@ -209,15 +229,7 @@ func deadGlobFindings(topLevel string, cfg *config.Config) []lintFinding {
 			}
 		}
 	}
-	return out
-}
-
-func isDeadGlob(topLevel, pat string) (bool, error) {
-	matches, err := hasher.MatchGlob(topLevel, pat)
-	if err != nil {
-		return false, err
-	}
-	return len(matches) == 0, nil
+	return out, nil
 }
 
 func sortFindings(f []lintFinding) {
