@@ -83,6 +83,22 @@ func (g Gate) Children() []string {
 	return out
 }
 
+// Finding is one validation issue produced by Validate. Both Load and
+// `markgate config lint` consume the same finding stream — Load surfaces
+// the first as an error (preserving the historical exit-2 behavior),
+// while lint surfaces all of them as warnings so they compose with its
+// dead-glob and unknown-field checks. Sharing the producer keeps lint
+// from drifting away from runtime validation.
+type Finding struct {
+	// Path is the dotted location of the offender, e.g.
+	// "gates.x.requires[0]" or "gates.x.hash". Used by lint to populate
+	// its finding's Path; Load ignores it.
+	Path string
+	// Message is the user-facing explanation, already prefixed with Path
+	// (so Load can print it directly without re-formatting).
+	Message string
+}
+
 // Load reads topLevel/.markgate.yml. A missing file yields an empty
 // Config (never nil) so callers can always call c.Gate(...) safely.
 func Load(topLevel string) (*Config, error) {
@@ -98,49 +114,98 @@ func Load(topLevel string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", Filename, err)
 	}
-	if err := c.validate(); err != nil {
-		return nil, err
+	if findings := c.Validate(); len(findings) > 0 {
+		return nil, errors.New(findings[0].Message)
 	}
 	return &c, nil
 }
 
-func (c *Config) validate() error {
-	for k, g := range c.Gates {
-		if err := key.Validate(k); err != nil {
-			return fmt.Errorf("gates.%s: %w", k, err)
-		}
-		switch g.Hash {
-		case "", HashGitTree:
-			// git-tree accepts optional include/exclude for narrowing the
-			// hash target while keeping HEAD-aware invalidation.
-		case HashFiles:
-			if len(g.Include) == 0 {
-				return fmt.Errorf("gates.%s: hash=files requires a non-empty include list", k)
-			}
-		default:
-			return fmt.Errorf("gates.%s: unknown hash %q (want %q or %q)", k, g.Hash, HashGitTree, HashFiles)
-		}
-		if g.TTL != "" {
-			if _, err := duration.Parse(g.TTL); err != nil {
-				return fmt.Errorf("gates.%s.ttl: %w", k, err)
-			}
-		}
-		if len(g.Composes) > 0 && len(g.Requires) > 0 {
-			return fmt.Errorf("gates.%s: composes and requires cannot both be set", k)
-		}
-		for _, child := range g.Children() {
-			if _, ok := c.Gates[child]; !ok {
-				return fmt.Errorf("gates.%s: references undeclared gate %q", k, child)
-			}
-			if child == k {
-				return fmt.Errorf("gates.%s: cycle detected (self-reference)", k)
-			}
-		}
+// Validate returns every validation issue in c. An empty slice means c
+// is valid. Order is deterministic (gates iterated in lexical order,
+// per-gate checks in a fixed sequence) so callers like lint can rely
+// on stable output.
+func (c *Config) Validate() []Finding {
+	var out []Finding
+	names := make([]string, 0, len(c.Gates))
+	for name := range c.Gates {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		out = append(out, validateGate(c, name, c.Gates[name])...)
 	}
 	if cycle := c.findCycle(); cycle != "" {
-		return fmt.Errorf("gates: cycle detected (%s)", cycle)
+		out = append(out, Finding{
+			Path:    "gates",
+			Message: fmt.Sprintf("gates: cycle detected (%s)", cycle),
+		})
 	}
-	return nil
+	return out
+}
+
+func validateGate(c *Config, name string, g Gate) []Finding {
+	var out []Finding
+	if err := key.Validate(name); err != nil {
+		out = append(out, Finding{
+			Path:    fmt.Sprintf("gates.%s", name),
+			Message: fmt.Sprintf("gates.%s: %s", name, err.Error()),
+		})
+	}
+	switch g.Hash {
+	case "", HashGitTree:
+		// git-tree accepts optional include/exclude for narrowing the
+		// hash target while keeping HEAD-aware invalidation.
+	case HashFiles:
+		if len(g.Include) == 0 {
+			out = append(out, Finding{
+				Path:    fmt.Sprintf("gates.%s", name),
+				Message: fmt.Sprintf("gates.%s: hash=files requires a non-empty include list", name),
+			})
+		}
+	default:
+		out = append(out, Finding{
+			Path:    fmt.Sprintf("gates.%s.hash", name),
+			Message: fmt.Sprintf("gates.%s: unknown hash %q (want %q or %q)", name, g.Hash, HashGitTree, HashFiles),
+		})
+	}
+	if g.TTL != "" {
+		if _, err := duration.Parse(g.TTL); err != nil {
+			out = append(out, Finding{
+				Path:    fmt.Sprintf("gates.%s.ttl", name),
+				Message: fmt.Sprintf("gates.%s.ttl: %s", name, err.Error()),
+			})
+		}
+	}
+	if len(g.Composes) > 0 && len(g.Requires) > 0 {
+		out = append(out, Finding{
+			Path:    fmt.Sprintf("gates.%s", name),
+			Message: fmt.Sprintf("gates.%s: composes and requires cannot both be set", name),
+		})
+	}
+	out = append(out, validateChildren(c, name, "composes", g.Composes)...)
+	out = append(out, validateChildren(c, name, "requires", g.Requires)...)
+	return out
+}
+
+func validateChildren(c *Config, parent, field string, children []string) []Finding {
+	var out []Finding
+	for i, child := range children {
+		path := fmt.Sprintf("gates.%s.%s[%d]", parent, field, i)
+		if child == parent {
+			out = append(out, Finding{
+				Path:    path,
+				Message: fmt.Sprintf("gates.%s: cycle detected (self-reference)", parent),
+			})
+			continue
+		}
+		if _, ok := c.Gates[child]; !ok {
+			out = append(out, Finding{
+				Path:    path,
+				Message: fmt.Sprintf("gates.%s: references undeclared gate %q", parent, child),
+			})
+		}
+	}
+	return out
 }
 
 // findCycle returns a human-readable cycle path (e.g. "a -> b -> a") if any
@@ -182,6 +247,12 @@ func (c *Config) findCycle() string {
 			}
 			child := top.kids[top.idx]
 			top.idx++
+			if child == top.node {
+				// Self-loop is reported per-edge by Validate (with the
+				// composes/requires index in Path); skip here so we don't
+				// emit a duplicate "cycle detected (a -> a)" finding.
+				continue
+			}
 			switch color[child] {
 			case white:
 				parent[child] = top.node
