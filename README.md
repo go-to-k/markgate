@@ -596,6 +596,11 @@ markgate status     [key]              Show marker + match status.
 markgate clear      [key]              Delete the marker (idempotent).
 markgate run        [key] -- <cmd>...  Sugar for verify + <cmd> + set.
 markgate init                          Write a starter .markgate.yml.
+markgate config lint                   Warn on dead include/exclude globs
+                                       and unknown fields in .markgate.yml.
+                                       Exit 0 clean, 1 warnings, 2 error.
+                                       --json emits an array of
+                                       {path, severity, message}.
 markgate version                       Print the version.
 markgate completion <shell>            Emit a completion script (bash / zsh / fish / powershell).
 ```

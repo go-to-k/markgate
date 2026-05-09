@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -578,6 +579,147 @@ func TestStateDir_RunCmd(t *testing.T) {
 	// Second run should skip (match on same state).
 	if code, _ := runCmd(t, "run", "check", "--state-dir", stateDir, "--", "false"); code != 0 {
 		t.Errorf("run skip: %d, want 0 (should not execute child)", code)
+	}
+}
+
+func TestConfigLint_CleanConfig(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  check:\n    hash: files\n    include:\n      - \"src/**\"\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 0 {
+		t.Errorf("clean config: code = %d, want 0; out: %q", code, out)
+	}
+	if out != "" {
+		t.Errorf("clean config: want empty stdout, got %q", out)
+	}
+}
+
+func TestConfigLint_DeadIncludeGlob(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  docs:\n    hash: files\n    include:\n      - \"README.md\"\n      - \"docss/**\"\n")
+	writeRepoFile(t, dir, "README.md", "x")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 1 {
+		t.Errorf("dead include: code = %d, want 1", code)
+	}
+	if !bytes.Contains([]byte(out), []byte("gates.docs.include[1]: 'docss/**' matches 0 files")) {
+		t.Errorf("missing dead-include warning, got:\n%s", out)
+	}
+	if bytes.Contains([]byte(out), []byte("include[0]")) {
+		t.Errorf("unexpected warning on healthy glob:\n%s", out)
+	}
+}
+
+func TestConfigLint_DeadExcludeGlob(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  api:\n    hash: files\n    include:\n      - \"src/**\"\n    exclude:\n      - \"*.proto\"\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 1 {
+		t.Errorf("dead exclude: code = %d, want 1", code)
+	}
+	if !bytes.Contains([]byte(out), []byte("gates.api.exclude[0]: '*.proto' matches 0 files")) {
+		t.Errorf("missing dead-exclude warning, got:\n%s", out)
+	}
+}
+
+func TestConfigLint_UnknownTopLevelField(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  check: {}\nweird_top: 1\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 1 {
+		t.Errorf("unknown top: code = %d, want 1", code)
+	}
+	if !bytes.Contains([]byte(out), []byte("unknown field: weird_top")) {
+		t.Errorf("missing unknown-field warning, got:\n%s", out)
+	}
+}
+
+func TestConfigLint_UnknownGateField(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  legacy:\n    hash: git-tree\n    legacy_field: foo\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 1 {
+		t.Errorf("unknown gate field: code = %d, want 1", code)
+	}
+	if !bytes.Contains([]byte(out), []byte("unknown field: gates.legacy.legacy_field")) {
+		t.Errorf("missing unknown-gate-field warning, got:\n%s", out)
+	}
+}
+
+func TestConfigLint_ParseError(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml", "gates:\n  - bad\n :::not yaml\n")
+
+	code, _ := runCmd(t, "config", "lint")
+	if code != 2 {
+		t.Errorf("parse error: code = %d, want 2", code)
+	}
+}
+
+func TestConfigLint_MissingConfig(t *testing.T) {
+	initRepo(t)
+	code, _ := runCmd(t, "config", "lint")
+	if code != 2 {
+		t.Errorf("missing config: code = %d, want 2", code)
+	}
+}
+
+func TestConfigLint_JSONOutput(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  docs:\n    hash: files\n    include:\n      - \"docss/**\"\n")
+
+	code, out := runCmd(t, "config", "lint", "--json")
+	if code != 1 {
+		t.Errorf("json dead glob: code = %d, want 1", code)
+	}
+	var findings []struct {
+		Path     string `json:"path"`
+		Severity string `json:"severity"`
+		Message  string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(out), &findings); err != nil {
+		t.Fatalf("invalid JSON: %v\nout: %s", err, out)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %d, want 1; out: %s", len(findings), out)
+	}
+	if findings[0].Path != "gates.docs.include[0]" {
+		t.Errorf("path = %q, want gates.docs.include[0]", findings[0].Path)
+	}
+	if findings[0].Severity != "warning" {
+		t.Errorf("severity = %q, want warning", findings[0].Severity)
+	}
+}
+
+func TestConfigLint_JSONCleanIsEmptyArray(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  check:\n    hash: files\n    include:\n      - \"src/**\"\n")
+
+	code, out := runCmd(t, "config", "lint", "--json")
+	if code != 0 {
+		t.Errorf("clean json: code = %d, want 0", code)
+	}
+	var findings []any
+	if err := json.Unmarshal([]byte(out), &findings); err != nil {
+		t.Fatalf("invalid JSON: %v\nout: %s", err, out)
+	}
+	if len(findings) != 0 {
+		t.Errorf("clean json findings = %d, want 0", len(findings))
 	}
 }
 

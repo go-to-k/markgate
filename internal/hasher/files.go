@@ -49,10 +49,9 @@ func (f Files) Hash(repo *gitutil.Repo) (string, error) {
 // include minus exclude. Directories and matches that disappear between
 // glob and stat are filtered out.
 func (f Files) resolve(topLevel string) ([]string, error) {
-	fsys := os.DirFS(topLevel)
 	seen := make(map[string]struct{})
 	for _, pat := range f.Include {
-		matches, err := doublestar.Glob(fsys, pat)
+		matches, err := MatchGlob(topLevel, pat)
 		if err != nil {
 			return nil, fmt.Errorf("include glob %q: %w", pat, err)
 		}
@@ -74,9 +73,25 @@ func (f Files) resolve(topLevel string) ([]string, error) {
 
 	out := make([]string, 0, len(seen))
 	for p := range seen {
-		info, err := os.Stat(filepath.Join(topLevel, p))
-		if err != nil {
-			// Path vanished between glob and stat — skip.
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// MatchGlob expands pat against topLevel as a doublestar glob and returns
+// the sorted repo-relative paths of matching regular files. Directories
+// and entries that disappear between glob and stat are filtered out.
+func MatchGlob(topLevel, pat string) ([]string, error) {
+	fsys := os.DirFS(topLevel)
+	matches, err := doublestar.Glob(fsys, pat)
+	if err != nil {
+		return nil, fmt.Errorf("invalid glob %q: %w", pat, err)
+	}
+	out := make([]string, 0, len(matches))
+	for _, p := range matches {
+		info, statErr := os.Stat(filepath.Join(topLevel, p))
+		if statErr != nil {
 			continue
 		}
 		if info.IsDir() {

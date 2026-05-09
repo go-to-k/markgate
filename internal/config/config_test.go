@@ -89,6 +89,36 @@ func TestLoad_StateDirPreserved(t *testing.T) {
 	}
 }
 
+func TestLoadStrict_RejectsUnknownField(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "gates:\n  legacy:\n    hash: git-tree\n    legacy_field: foo\n")
+	if _, err := LoadStrict(dir); err == nil {
+		t.Error("want error for unknown gate field under strict load")
+	}
+	// Default Load is forgiving — same input must parse without error.
+	if _, err := Load(dir); err != nil {
+		t.Errorf("Load should ignore unknown fields, got: %v", err)
+	}
+}
+
+func TestLoadStrict_MissingIsError(t *testing.T) {
+	if _, err := LoadStrict(t.TempDir()); err == nil {
+		t.Error("want error when config is missing under strict load")
+	}
+}
+
+func TestLoadStrict_AcceptsValid(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "gates:\n  check:\n    hash: git-tree\n    state_dir: .mg\n")
+	c, err := LoadStrict(dir)
+	if err != nil {
+		t.Fatalf("strict load on valid config: %v", err)
+	}
+	if g := c.Gate("check"); g.StateDir != ".mg" {
+		t.Errorf("StateDir = %q, want %q", g.StateDir, ".mg")
+	}
+}
+
 func TestGate_DefaultForMissingKey(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, "gates:\n  pre-commit:\n    hash: git-tree\n")
