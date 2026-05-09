@@ -63,24 +63,6 @@ func runE(cmd *cobra.Command, args []string, overrides *gateFlagValues, explain 
 		return &ExitError{Code: 2, Err: evalErr}
 	}
 
-	// TTL is surfaced only at the parent level (see verify.go for the
-	// rationale; same TODO applies for chain propagation).
-	if res.matched {
-		m, loadErr := state.Load(c.markerPath)
-		if loadErr != nil && !errors.Is(loadErr, state.ErrNotFound) {
-			return &ExitError{Code: 2, Err: loadErr}
-		}
-		if m != nil {
-			ttl, ttlErr := checkTTL(c.gate, m)
-			if ttlErr != nil {
-				return &ExitError{Code: 2, Err: ttlErr}
-			}
-			if ttl.expired {
-				res.matched = false
-			}
-		}
-	}
-
 	label := stateLabel(res)
 	if emitErr := emitExplain(c, explain, cmd.OutOrStdout(), cmd.ErrOrStderr(), label); emitErr != nil {
 		return &ExitError{Code: 2, Err: emitErr}

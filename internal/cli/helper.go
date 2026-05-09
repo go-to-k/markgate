@@ -163,18 +163,20 @@ func (c *gateCtx) child(k string) (*gateCtx, error) {
 
 // evalResult is what evaluate returns to callers (verify, status, run).
 //
-// matched is the freshness verdict (own scope ANDed with every recursive
-// composes/requires child).
+// matched is the freshness verdict (own scope ANDed with TTL ANDed
+// with every recursive composes/requires child).
 //
 // reason / childKey explain why matched is false; childKey names the
 // offending descendant for set-time requires enforcement and #24's
 // --explain output.
 //
-// marker / digest / hashTypeChanged / ownDigestDiff carry the work
-// evaluate already did so callers (status, in particular) don't reload
-// or re-hash. marker is nil when no marker exists. digest is empty
-// when the gate has no own scope. hashTypeChanged and ownDigestDiff
-// are only meaningful when marker is non-nil.
+// marker / digest / hashTypeChanged / ownDigestDiff / ttl carry the
+// work evaluate already did so callers don't reload or re-hash. marker
+// is nil when no marker exists. digest is empty when the gate has no
+// own scope. hashTypeChanged and ownDigestDiff are only meaningful
+// when marker is non-nil. ttl is populated whenever the gate has a
+// TTL configured (regardless of whether it's expired) so status can
+// render "expires in 4d" / "expired 1d ago" notes from one source.
 type evalResult struct {
 	matched         bool
 	reason          string
@@ -183,13 +185,20 @@ type evalResult struct {
 	digest          string
 	hashTypeChanged bool
 	ownDigestDiff   bool
+	ttl             ttlExpiry
 }
 
 // evaluate computes the recursive freshness verdict for c. It loads the
-// marker, optionally compares the own-scope digest, and ANDs in every
-// composes/requires child. Cycles are impossible here because config
-// validation rejects them. The result carries the loaded marker and
-// computed digest so callers don't have to repeat the work.
+// marker, optionally compares the own-scope digest, applies any TTL,
+// and ANDs in every composes/requires child. Cycles are impossible
+// here because config validation rejects them. The result carries the
+// loaded marker, computed digest, and TTL details so callers don't
+// repeat the work.
+//
+// TTL applies to every gate with `ttl:` set (own-scope or deps-only):
+// it caps the marker's wall-clock age. Because evaluate recurses, a
+// child's expired TTL propagates up — the parent's evaluate will
+// receive matched=false from the child and bubble it.
 func (c *gateCtx) evaluate() (evalResult, error) {
 	m, err := state.Load(c.markerPath)
 	if err != nil {
@@ -221,6 +230,17 @@ func (c *gateCtx) evaluate() (evalResult, error) {
 		res.ownDigestDiff = m.Digest != digest
 		if res.hashTypeChanged || res.ownDigestDiff {
 			res.reason = "own digest mismatch"
+			return res, nil
+		}
+	}
+	if c.gate.TTL != "" {
+		ttl, ttlErr := checkTTL(c.gate, m)
+		if ttlErr != nil {
+			return evalResult{}, ttlErr
+		}
+		res.ttl = ttl
+		if ttl.expired {
+			res.reason = "expired by ttl"
 			return res, nil
 		}
 	}
