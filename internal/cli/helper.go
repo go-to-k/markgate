@@ -199,6 +199,18 @@ func (c *gateCtx) evaluate() (evalResult, error) {
 		return evalResult{}, err
 	}
 	res := evalResult{marker: m}
+	expectedKind := state.KindHash
+	if !c.gate.HasOwnScope() {
+		expectedKind = state.KindDepsOnly
+	}
+	if m.Kind != expectedKind {
+		// Gate flipped between own-scope and deps-only since last set;
+		// the marker is from a different freshness model. Treat it as
+		// stale so the next set rewrites it under the current model.
+		res.hashTypeChanged = true
+		res.reason = "marker kind changed"
+		return res, nil
+	}
 	if c.gate.HasOwnScope() {
 		digest, hashErr := c.hasher.Hash(c.repo)
 		if hashErr != nil {
@@ -377,12 +389,13 @@ func formatAge(d time.Duration) string {
 // HEAD is recorded only for git-tree, to aid status output. CreatedAt is
 // stamped here (via the package's now indirection) rather than left for
 // state.Save to fill in, so tests that pin the clock for TTL coverage
-// observe the pinned value. Deps-only gates (no own scope) get a sentinel
-// marker so their freshness is purely a function of children but `set`
-// still leaves a record that an explicit `markgate set <key>` happened.
+// observe the pinned value. Deps-only gates (no own scope) get a marker
+// tagged Kind=KindDepsOnly with no hash_type/digest: their freshness is
+// purely a function of children, but `set` still leaves a record that an
+// explicit `markgate set <key>` happened.
 func newMarker(c *gateCtx) (*state.Marker, error) {
 	if !c.gate.HasOwnScope() {
-		return &state.Marker{HashType: hashTypeDepsOnly}, nil
+		return &state.Marker{Kind: state.KindDepsOnly, CreatedAt: now().UTC()}, nil
 	}
 	digest, err := c.hasher.Hash(c.repo)
 	if err != nil {
@@ -400,8 +413,3 @@ func newMarker(c *gateCtx) (*state.Marker, error) {
 	}
 	return m, nil
 }
-
-// hashTypeDepsOnly is the sentinel HashType written for gates that have
-// composes/requires but no include of their own. The digest field stays
-// empty: there is nothing to hash. Status output recognises this value.
-const hashTypeDepsOnly = "deps-only"

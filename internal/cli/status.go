@@ -57,7 +57,8 @@ func newStatusCmd() *cobra.Command {
 
 type statusMarkerJSON struct {
 	CreatedAt string `json:"created_at"`
-	HashType  string `json:"hash_type"`
+	Kind      string `json:"kind,omitempty"`
+	HashType  string `json:"hash_type,omitempty"`
 	Head      string `json:"head,omitempty"`
 }
 
@@ -91,6 +92,7 @@ func (r statusRow) toJSON() statusRowJSON {
 	if r.marker != nil {
 		row.Marker = &statusMarkerJSON{
 			CreatedAt: r.marker.CreatedAt.UTC().Format(time.RFC3339),
+			Kind:      r.marker.Kind,
 			HashType:  r.marker.HashType,
 			Head:      r.marker.Head,
 		}
@@ -195,7 +197,11 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 	}
 
 	fmt.Fprintf(out, "key:        %s\n", c.key)
-	fmt.Fprintf(out, "hash type:  %s\n", m.HashType)
+	if m.Kind == state.KindDepsOnly {
+		fmt.Fprintln(out, "kind:       deps-only")
+	} else {
+		fmt.Fprintf(out, "hash type:  %s\n", m.HashType)
+	}
 	fmt.Fprintf(out, "created:    %s\n", m.CreatedAt.Format(time.RFC3339))
 	if m.Head != "" {
 		fmt.Fprintf(out, "head:       %s\n", m.Head)
@@ -370,11 +376,21 @@ func buildRow(k string, gate config.Gate, h hasher.Hasher, repo *gitutil.Repo, m
 		return row, nil
 	}
 	row.marker = m
-	digest, hashErr := h.Hash(repo)
-	if hashErr != nil {
-		return row, hashErr
+	mismatch := false
+	if m.Kind == state.KindDepsOnly {
+		// Deps-only marker: no own scope to hash, so freshness depends
+		// on children alone. Bare status doesn't recurse into children
+		// (cost / surprise), so report match here and let the user run
+		// `markgate verify <key>` for the full propagation if it
+		// matters. The presence of the marker proves an explicit set.
+	} else {
+		digest, hashErr := h.Hash(repo)
+		if hashErr != nil {
+			return row, hashErr
+		}
+		mismatch = m.HashType != h.Type() || m.Digest != digest
 	}
-	if m.HashType != h.Type() || m.Digest != digest {
+	if mismatch {
 		row.state = stateMismatch
 		row.note = noteDigestDiff
 	} else {

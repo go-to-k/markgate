@@ -22,13 +22,29 @@ import (
 var ErrNotFound = errors.New("marker not found")
 
 // SchemaVersion tags the on-disk format. Bump on breaking changes.
-const SchemaVersion = 1
+// v1 wrote a sentinel `hash_type: "deps-only"` for gates without their
+// own scope; v2 splits that out into a dedicated `kind` field so
+// hash_type stays semantically clean (the actual hashing algorithm).
+// state.Load treats wrong-version markers as ErrNotFound, so old v1
+// markers are silently re-generated on first verify after upgrade.
+const SchemaVersion = 2
+
+// Marker kinds. KindHash (the empty string default) is a normal
+// hash-and-digest marker. KindDepsOnly records that an explicit `set`
+// happened on a gate whose freshness is purely the AND of its
+// composes/requires children — no own scope to hash, no digest
+// recorded.
+const (
+	KindHash     = ""
+	KindDepsOnly = "deps-only"
+)
 
 // Marker is the serialized form of a recorded state hash.
 type Marker struct {
 	Version   int       `json:"version"`
-	HashType  string    `json:"hash_type"`
-	Digest    string    `json:"digest"`
+	Kind      string    `json:"kind,omitempty"`
+	HashType  string    `json:"hash_type,omitempty"`
+	Digest    string    `json:"digest,omitempty"`
 	Head      string    `json:"head,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
