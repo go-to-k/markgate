@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.3.3](https://github.com/go-to-k/markgate/compare/v0.3.2...v0.3.3) - 2026-05-09
+- docs: relocate Shell completion from Install to CLI reference by @go-to-k in https://github.com/go-to-k/markgate/pull/46
+- fix(cli): config lint mirrors runtime validation by @go-to-k in https://github.com/go-to-k/markgate/pull/48
+
 ## [v0.3.2](https://github.com/go-to-k/markgate/compare/v0.3.1...v0.3.2) - 2026-05-09
 - fix: address three bug reports from cdkd against v0.3.1 by @go-to-k in https://github.com/go-to-k/markgate/pull/44
 
