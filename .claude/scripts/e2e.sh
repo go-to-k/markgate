@@ -303,6 +303,17 @@ out=$($MG config lint --json 2>&1)
 assert_contains "lint --json has path field"     '"path"'     "$out"
 assert_contains "lint --json has severity field" '"severity"' "$out"
 
+# Malformed glob (unmatched `[`) is a config error, not a finding —
+# must surface as exit 2, not silently pass.
+cat > .markgate.yml <<'EOF'
+gates:
+  bad:
+    hash: files
+    include: ["src/[unclosed"]
+EOF
+$MG config lint >/dev/null 2>&1
+assert_eq "lint malformed glob exit=2" "2" "$?"
+
 cyan "=== #34 TTL ==="
 new_repo
 
