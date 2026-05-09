@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -57,24 +58,34 @@ func runE(cmd *cobra.Command, args []string, overrides *gateFlagValues, explain 
 		return err
 	}
 
-	label, matched, m, stateErr := explainStateForVerify(c)
-	if stateErr != nil {
-		return &ExitError{Code: 2, Err: stateErr}
+	res, evalErr := c.evaluate()
+	if evalErr != nil {
+		return &ExitError{Code: 2, Err: evalErr}
 	}
-	if matched {
-		ttl, ttlErr := checkTTL(c.gate, m)
-		if ttlErr != nil {
-			return &ExitError{Code: 2, Err: ttlErr}
+
+	// TTL is surfaced only at the parent level (see verify.go for the
+	// rationale; same TODO applies for chain propagation).
+	if res.matched {
+		m, loadErr := state.Load(c.markerPath)
+		if loadErr != nil && !errors.Is(loadErr, state.ErrNotFound) {
+			return &ExitError{Code: 2, Err: loadErr}
 		}
-		if ttl.expired {
-			label = stateMismatch
-			matched = false
+		if m != nil {
+			ttl, ttlErr := checkTTL(c.gate, m)
+			if ttlErr != nil {
+				return &ExitError{Code: 2, Err: ttlErr}
+			}
+			if ttl.expired {
+				res.matched = false
+			}
 		}
 	}
+
+	label := stateLabel(res)
 	if emitErr := emitExplain(c, explain, cmd.OutOrStdout(), cmd.ErrOrStderr(), label); emitErr != nil {
 		return &ExitError{Code: 2, Err: emitErr}
 	}
-	if matched {
+	if res.matched {
 		return nil
 	}
 
@@ -86,7 +97,12 @@ func runE(cmd *cobra.Command, args []string, overrides *gateFlagValues, explain 
 		return &ExitError{Code: code}
 	}
 
-	// Success: record a fresh marker.
+	if stale, sErr := c.staleRequiredChild(); sErr != nil {
+		return &ExitError{Code: 2, Err: sErr}
+	} else if stale != "" {
+		return &ExitError{Code: 2, Err: fmt.Errorf("run %s: required child %q is stale", c.key, stale)}
+	}
+
 	newM, err := newMarker(c)
 	if err != nil {
 		return &ExitError{Code: 2, Err: err}

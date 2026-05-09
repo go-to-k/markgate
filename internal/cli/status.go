@@ -139,14 +139,28 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 		return &ExitError{Code: 2, Err: loadErr}
 	}
 
-	digest, err := c.hasher.Hash(c.repo)
-	if err != nil {
-		return &ExitError{Code: 2, Err: err}
+	// ownDigestDiff is true when the marker's own-scope digest disagrees
+	// with the current state. Deps-only gates (no own scope) skip the
+	// computation entirely: their freshness is purely a function of
+	// children (see evaluate()).
+	hashTypeChanged := false
+	ownDigestDiff := false
+	if c.gate.HasOwnScope() {
+		digest, hashErr := c.hasher.Hash(c.repo)
+		if hashErr != nil {
+			return &ExitError{Code: 2, Err: hashErr}
+		}
+		hashTypeChanged = m.HashType != c.hasher.Type()
+		ownDigestDiff = m.Digest != digest
+	}
+
+	res, evalErr := c.evaluate()
+	if evalErr != nil {
+		return &ExitError{Code: 2, Err: evalErr}
 	}
 
 	label := stateMatch
-	switch {
-	case m.HashType != c.hasher.Type(), m.Digest != digest:
+	if !res.matched || hashTypeChanged || ownDigestDiff {
 		label = stateMismatch
 	}
 
@@ -169,10 +183,14 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 			configured:   true,
 			unconfigured: false,
 		}
-		if label == stateMismatch {
+		switch {
+		case hashTypeChanged, ownDigestDiff:
 			row.state = stateMismatch
 			row.note = noteDigestDiff
-		} else {
+		case !res.matched:
+			row.state = stateMismatch
+			row.note = "child " + res.childKey + " is stale"
+		default:
 			row.state = stateMatch
 		}
 		if writeErr := writeJSON(out, row.toJSON()); writeErr != nil {
@@ -204,11 +222,14 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 	}
 
 	switch {
-	case m.HashType != c.hasher.Type():
+	case hashTypeChanged:
 		fmt.Fprintf(out, "state:      mismatch (hash type changed: %s -> %s)\n", m.HashType, c.hasher.Type())
 		return &ExitError{Code: 1}
-	case m.Digest != digest:
+	case ownDigestDiff:
 		fmt.Fprintln(out, "state:      mismatch (digest differs)")
+		return &ExitError{Code: 1}
+	case !res.matched:
+		fmt.Fprintf(out, "state:      mismatch (%s)\n", res.reason)
 		return &ExitError{Code: 1}
 	}
 

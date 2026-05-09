@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/go-to-k/markgate/internal/state"
 )
 
 func newVerifyCmd() *cobra.Command {
@@ -23,32 +26,60 @@ func newVerifyCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		label, matched, m, err := explainStateForVerify(c)
-		if err != nil {
-			return &ExitError{Code: 2, Err: err}
+
+		res, evalErr := c.evaluate()
+		if evalErr != nil {
+			return &ExitError{Code: 2, Err: evalErr}
 		}
-		if matched {
-			ttl, ttlErr := checkTTL(c.gate, m)
-			if ttlErr != nil {
-				return &ExitError{Code: 2, Err: ttlErr}
+
+		// TTL is surfaced only at the parent level: a fresh-by-digest parent
+		// can still mismatch when its own marker is older than gate.TTL.
+		// TODO(#28+#29): TTL propagation through composes chain.
+		var ttlMessage string
+		if res.matched {
+			m, loadErr := state.Load(c.markerPath)
+			if loadErr != nil && !errors.Is(loadErr, state.ErrNotFound) {
+				return &ExitError{Code: 2, Err: loadErr}
 			}
-			if ttl.expired {
-				if emitErr := emitExplain(c, explain, cmd.OutOrStdout(), cmd.ErrOrStderr(), stateMismatch); emitErr != nil {
-					return &ExitError{Code: 2, Err: emitErr}
+			if m != nil {
+				ttl, ttlErr := checkTTL(c.gate, m)
+				if ttlErr != nil {
+					return &ExitError{Code: 2, Err: ttlErr}
 				}
-				fmt.Fprintf(cmd.ErrOrStderr(),
-					"markgate: state mismatch (expired by ttl: %s, marker is %s old)\n",
-					c.gate.TTL, formatAge(ttl.age))
-				return &ExitError{Code: 1}
+				if ttl.expired {
+					res.matched = false
+					ttlMessage = fmt.Sprintf(
+						"markgate: state mismatch (expired by ttl: %s, marker is %s old)\n",
+						c.gate.TTL, formatAge(ttl.age))
+				}
 			}
 		}
+
+		label := stateLabel(res)
 		if emitErr := emitExplain(c, explain, cmd.OutOrStdout(), cmd.ErrOrStderr(), label); emitErr != nil {
 			return &ExitError{Code: 2, Err: emitErr}
 		}
-		if !matched {
+		if ttlMessage != "" {
+			fmt.Fprint(cmd.ErrOrStderr(), ttlMessage)
+		}
+		if !res.matched {
 			return &ExitError{Code: 1}
 		}
 		return nil
 	}
 	return cmd
+}
+
+// stateLabel maps an evalResult to the explain-vocabulary label.
+// Reasons starting with "no marker" are mapped to stateNoMarker so --explain
+// reports the same "no marker" string as before; everything else collapses
+// to stateMismatch / stateMatch.
+func stateLabel(res evalResult) string {
+	if res.matched {
+		return stateMatch
+	}
+	if res.reason == "no marker" {
+		return stateNoMarker
+	}
+	return stateMismatch
 }

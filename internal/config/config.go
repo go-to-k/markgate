@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -48,6 +50,38 @@ type Gate struct {
 	// independently of the repo. Format is the union of time.ParseDuration
 	// and the d/w extension (see internal/duration).
 	TTL string `yaml:"ttl,omitempty"`
+	// Composes / Requires list child gate keys this gate depends on.
+	// composes (loose): parent is mismatch if any child is mismatch, but
+	//   `set` of the parent is unconditional.
+	// requires (strict): same propagation, plus `set` of the parent is
+	//   refused if any required child is stale.
+	// A gate may set at most one of the two; using both is a load error.
+	Composes []string `yaml:"composes,omitempty"`
+	Requires []string `yaml:"requires,omitempty"`
+}
+
+// HasDeps reports whether this gate has any composes or requires children.
+func (g Gate) HasDeps() bool {
+	return len(g.Composes) > 0 || len(g.Requires) > 0
+}
+
+// HasOwnScope reports whether the gate computes its own digest. Gates with
+// dependencies but no explicit include omit the own-scope check so they
+// don't inherit the git-tree default and become almost always stale.
+func (g Gate) HasOwnScope() bool {
+	if g.HasDeps() && len(g.Include) == 0 {
+		return false
+	}
+	return true
+}
+
+// Children returns the union of composes and requires (in that order).
+// At most one is set thanks to validation, so the order is deterministic.
+func (g Gate) Children() []string {
+	out := make([]string, 0, len(g.Composes)+len(g.Requires))
+	out = append(out, g.Composes...)
+	out = append(out, g.Requires...)
+	return out
 }
 
 // LoadStrict is like Load but rejects unknown YAML fields, surfacing typos
@@ -112,8 +146,94 @@ func (c *Config) validate() error {
 				return fmt.Errorf("gates.%s.ttl: %w", k, err)
 			}
 		}
+		if len(g.Composes) > 0 && len(g.Requires) > 0 {
+			return fmt.Errorf("gates.%s: composes and requires cannot both be set", k)
+		}
+		for _, child := range g.Children() {
+			if _, ok := c.Gates[child]; !ok {
+				return fmt.Errorf("gates.%s: references undeclared gate %q", k, child)
+			}
+			if child == k {
+				return fmt.Errorf("gates.%s: cycle detected (self-reference)", k)
+			}
+		}
+	}
+	if cycle := c.findCycle(); cycle != "" {
+		return fmt.Errorf("gates: cycle detected (%s)", cycle)
 	}
 	return nil
+}
+
+// findCycle returns a human-readable cycle path (e.g. "a -> b -> a") if any
+// composes/requires edges form one, or "" when the graph is acyclic.
+// Iterative DFS keeps the stack bounded for arbitrarily deep configs.
+func (c *Config) findCycle() string {
+	const (
+		white = 0
+		gray  = 1
+		black = 2
+	)
+	color := make(map[string]int, len(c.Gates))
+	parent := make(map[string]string, len(c.Gates))
+
+	keys := make([]string, 0, len(c.Gates))
+	for k := range c.Gates {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	type frame struct {
+		node string
+		idx  int
+		kids []string
+	}
+
+	for _, root := range keys {
+		if color[root] != white {
+			continue
+		}
+		stack := []frame{{node: root, idx: 0, kids: c.Gates[root].Children()}}
+		color[root] = gray
+		for len(stack) > 0 {
+			top := &stack[len(stack)-1]
+			if top.idx >= len(top.kids) {
+				color[top.node] = black
+				stack = stack[:len(stack)-1]
+				continue
+			}
+			child := top.kids[top.idx]
+			top.idx++
+			switch color[child] {
+			case white:
+				parent[child] = top.node
+				color[child] = gray
+				stack = append(stack, frame{node: child, idx: 0, kids: c.Gates[child].Children()})
+			case gray:
+				return formatCycle(parent, top.node, child)
+			}
+		}
+	}
+	return ""
+}
+
+// formatCycle reconstructs the cycle path "child -> ... -> from -> child"
+// from the DFS parent map for use in error messages.
+func formatCycle(parent map[string]string, from, child string) string {
+	rev := []string{from}
+	for n := from; n != child; {
+		p, ok := parent[n]
+		if !ok {
+			break
+		}
+		rev = append(rev, p)
+		n = p
+	}
+	path := make([]string, 0, len(rev)+1)
+	for i := len(rev) - 1; i >= 0; i-- {
+		path = append(path, rev[i])
+	}
+	path = append(path, child)
+	return strings.Join(path, " -> ")
 }
 
 // Gate returns the configuration for k, defaulting to hash=git-tree when
