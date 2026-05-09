@@ -45,6 +45,15 @@ func (f Files) Hash(repo *gitutil.Repo) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// Scope implements Hasher.
+func (f Files) Scope(repo *gitutil.Repo) ([]string, error) {
+	top, err := repo.TopLevel()
+	if err != nil {
+		return nil, err
+	}
+	return f.resolve(top)
+}
+
 // resolve returns the sorted, deduplicated, repo-relative paths that match
 // include minus exclude. Directories and matches that disappear between
 // glob and stat are filtered out.

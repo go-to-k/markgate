@@ -31,6 +31,11 @@ import (
 type Hasher interface {
 	Type() string
 	Hash(repo *gitutil.Repo) (string, error)
+	// Scope returns the sorted, repo-relative file list that Hash would
+	// fold into the digest, after Include/Exclude filtering. Used by
+	// --explain to surface what is in scope without requiring callers to
+	// re-derive the glob filter.
+	Scope(repo *gitutil.Repo) ([]string, error)
 }
 
 // For returns a Hasher matching the gate configuration.
@@ -67,16 +72,7 @@ func (g GitTree) Hash(repo *gitutil.Repo) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	diffs, err := repo.DiffHeadNames()
-	if err != nil {
-		return "", err
-	}
-	untracked, err := repo.UntrackedNames()
-	if err != nil {
-		return "", err
-	}
-	files := dedupSort(append(diffs, untracked...))
-	files, err = filterGlobs(files, g.Include, g.Exclude)
+	files, err := g.Scope(repo)
 	if err != nil {
 		return "", err
 	}
@@ -89,6 +85,20 @@ func (g GitTree) Hash(repo *gitutil.Repo) (string, error) {
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// Scope implements Hasher.
+func (g GitTree) Scope(repo *gitutil.Repo) ([]string, error) {
+	diffs, err := repo.DiffHeadNames()
+	if err != nil {
+		return nil, err
+	}
+	untracked, err := repo.UntrackedNames()
+	if err != nil {
+		return nil, err
+	}
+	files := dedupSort(append(diffs, untracked...))
+	return filterGlobs(files, g.Include, g.Exclude)
 }
 
 // hashEntry feeds one path into h, framed so that "F a\nbody" and

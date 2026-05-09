@@ -18,16 +18,27 @@ func newStatusCmd() *cobra.Command {
 		ValidArgsFunction: gateKeyCompletion,
 	}
 	overrides := addGateFlags(cmd)
+	explain := addExplainFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if err := explain.validate(); err != nil {
+			return &ExitError{Code: 2, Err: err}
+		}
 		c, err := newGateCtx(resolveKey(args), overrides)
 		if err != nil {
 			return err
 		}
 		out := cmd.OutOrStdout()
+		errOut := cmd.ErrOrStderr()
 
 		m, err := state.Load(c.markerPath)
 		if err != nil {
 			if errors.Is(err, state.ErrNotFound) {
+				if emitErr := emitExplain(c, explain, out, errOut, stateNoMarker); emitErr != nil {
+					return &ExitError{Code: 2, Err: emitErr}
+				}
+				if explain != nil && explain.json {
+					return &ExitError{Code: 1}
+				}
 				fmt.Fprintf(out, "key:        %s\nstate:      no marker\n", c.key)
 				return &ExitError{Code: 1}
 			}
@@ -37,6 +48,39 @@ func newStatusCmd() *cobra.Command {
 		digest, err := c.hasher.Hash(c.repo)
 		if err != nil {
 			return &ExitError{Code: 2, Err: err}
+		}
+
+		// JSON --explain replaces the textual status block entirely so
+		// stdout stays a single object.
+		if explain != nil && explain.json {
+			label := stateMatch
+			exit := 0
+			switch {
+			case m.HashType != c.hasher.Type(), m.Digest != digest:
+				label = stateMismatch
+				exit = 1
+			}
+			if emitErr := emitExplain(c, explain, out, errOut, label); emitErr != nil {
+				return &ExitError{Code: 2, Err: emitErr}
+			}
+			if exit != 0 {
+				return &ExitError{Code: exit}
+			}
+			return nil
+		}
+
+		// Text --explain: scope listing on stderr first, then the
+		// existing status block on stdout. Recompute the label here so
+		// the stderr line agrees with the detailed stdout line.
+		if explain != nil && explain.enabled {
+			label := stateMatch
+			switch {
+			case m.HashType != c.hasher.Type(), m.Digest != digest:
+				label = stateMismatch
+			}
+			if emitErr := emitExplain(c, explain, out, errOut, label); emitErr != nil {
+				return &ExitError{Code: 2, Err: emitErr}
+			}
 		}
 
 		fmt.Fprintf(out, "key:        %s\n", c.key)

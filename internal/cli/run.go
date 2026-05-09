@@ -25,13 +25,17 @@ func newRunCmd() *cobra.Command {
 		ValidArgsFunction: gateKeyCompletion,
 	}
 	overrides := addGateFlags(cmd)
+	explain := addExplainFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		return runE(cmd, args, overrides)
+		return runE(cmd, args, overrides, explain)
 	}
 	return cmd
 }
 
-func runE(cmd *cobra.Command, args []string, overrides *gateFlagValues) error {
+func runE(cmd *cobra.Command, args []string, overrides *gateFlagValues, explain *explainFlags) error {
+	if err := explain.validate(); err != nil {
+		return &ExitError{Code: 2, Err: err}
+	}
 	dash := cmd.ArgsLenAtDash()
 	if dash < 0 {
 		return &ExitError{Code: 2, Err: errors.New("run: '--' separator before the command is required")}
@@ -53,27 +57,25 @@ func runE(cmd *cobra.Command, args []string, overrides *gateFlagValues) error {
 		return err
 	}
 
-	// Verify first; on match, skip execution entirely.
-	m, loadErr := state.Load(c.markerPath)
-	switch {
-	case loadErr == nil:
-		digest, hashErr := c.hasher.Hash(c.repo)
-		if hashErr != nil {
-			return &ExitError{Code: 2, Err: hashErr}
+	label, matched, m, stateErr := explainStateForVerify(c)
+	if stateErr != nil {
+		return &ExitError{Code: 2, Err: stateErr}
+	}
+	if matched {
+		ttl, ttlErr := checkTTL(c.gate, m)
+		if ttlErr != nil {
+			return &ExitError{Code: 2, Err: ttlErr}
 		}
-		if m.HashType == c.hasher.Type() && m.Digest == digest {
-			ttl, ttlErr := checkTTL(c.gate, m)
-			if ttlErr != nil {
-				return &ExitError{Code: 2, Err: ttlErr}
-			}
-			if !ttl.expired {
-				return nil
-			}
+		if ttl.expired {
+			label = stateMismatch
+			matched = false
 		}
-	case errors.Is(loadErr, state.ErrNotFound):
-		// fall through to execution
-	default:
-		return &ExitError{Code: 2, Err: loadErr}
+	}
+	if emitErr := emitExplain(c, explain, cmd.OutOrStdout(), cmd.ErrOrStderr(), label); emitErr != nil {
+		return &ExitError{Code: 2, Err: emitErr}
+	}
+	if matched {
+		return nil
 	}
 
 	code, execErr := execChild(cmdArgs)

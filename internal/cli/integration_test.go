@@ -25,23 +25,32 @@ func withClock(t *testing.T, instant time.Time) {
 // code (0 match, 1 mismatch, 2 error) plus captured stdout.
 func runCmd(t *testing.T, args ...string) (int, string) {
 	t.Helper()
+	code, stdout, _ := runCmdStderr(t, args...)
+	return code, stdout
+}
+
+// runCmdStderr is the long form of runCmd: same exit-code semantics, but
+// also returns the captured stderr. Used by --explain tests where the
+// scope listing is written to stderr.
+func runCmdStderr(t *testing.T, args ...string) (int, string, string) {
+	t.Helper()
 	root := newRootCmd("test")
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	root.SetOut(&stdout)
-	root.SetErr(io.Discard)
+	root.SetErr(&stderr)
 	root.SetArgs(args)
 
 	err := root.Execute()
 	if err == nil {
-		return 0, stdout.String()
+		return 0, stdout.String(), stderr.String()
 	}
 	var ee *ExitError
 	if errors.As(err, &ee) {
-		return ee.Code, stdout.String()
+		return ee.Code, stdout.String(), stderr.String()
 	}
 	// Mirrors Execute(): unknown errors (e.g. cobra Args validation
 	// rejections) map to exit code 2.
-	return 2, stdout.String()
+	return 2, stdout.String(), stderr.String()
 }
 
 // initRepo creates a fresh repo in a temp dir, chdirs into it (auto-
@@ -894,5 +903,218 @@ func TestTTL_MalformedRejectedAtConfigLoad(t *testing.T) {
 	}
 	if code, _ := runCmd(t, "verify", "g"); code != 2 {
 		t.Errorf("malformed ttl on verify: code = %d, want 2", code)
+	}
+}
+
+func TestExplain_VerifyNoMarkerListsScope(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+
+	code, stdout, stderr := runCmdStderr(t, "verify", "check", "--explain")
+	if code != 1 {
+		t.Errorf("verify with no marker: code = %d, want 1", code)
+	}
+	if stdout != "" {
+		t.Errorf("--explain text mode wrote to stdout: %q", stdout)
+	}
+	if !bytes.Contains([]byte(stderr), []byte("scope:")) {
+		t.Errorf("stderr missing 'scope:' header:\n%s", stderr)
+	}
+	if !bytes.Contains([]byte(stderr), []byte("src/a.go")) {
+		t.Errorf("stderr missing untracked file in scope:\n%s", stderr)
+	}
+	if !bytes.Contains([]byte(stderr), []byte("state: no marker")) {
+		t.Errorf("stderr missing 'state: no marker':\n%s", stderr)
+	}
+}
+
+func TestExplain_VerifyMismatchListsScope(t *testing.T) {
+	dir := initRepo(t)
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	writeRepoFile(t, dir, "seed.txt", "edited")
+
+	code, _, stderr := runCmdStderr(t, "verify", "check", "-e")
+	if code != 1 {
+		t.Errorf("verify after edit: code = %d, want 1", code)
+	}
+	if !bytes.Contains([]byte(stderr), []byte("seed.txt")) {
+		t.Errorf("stderr missing edited file in scope:\n%s", stderr)
+	}
+	if !bytes.Contains([]byte(stderr), []byte("state: mismatch")) {
+		t.Errorf("stderr missing mismatch state:\n%s", stderr)
+	}
+}
+
+func TestExplain_VerifyMatchPreservesExitZero(t *testing.T) {
+	initRepo(t)
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	code, _, stderr := runCmdStderr(t, "verify", "check", "--explain")
+	if code != 0 {
+		t.Errorf("verify (match) with --explain: code = %d, want 0", code)
+	}
+	if !bytes.Contains([]byte(stderr), []byte("state: match")) {
+		t.Errorf("stderr missing match state:\n%s", stderr)
+	}
+}
+
+func TestExplain_RespectsIncludeOnly(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, "docs/x.md", "x")
+
+	_, _, stderr := runCmdStderr(t, "verify", "check", "--include", "src/**", "-e")
+	if !bytes.Contains([]byte(stderr), []byte("src/a.go")) {
+		t.Errorf("stderr missing included path:\n%s", stderr)
+	}
+	if bytes.Contains([]byte(stderr), []byte("docs/x.md")) {
+		t.Errorf("stderr should not list out-of-include path:\n%s", stderr)
+	}
+}
+
+func TestExplain_RespectsExcludeFilter(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "vendor/lib.go", "lib")
+	writeRepoFile(t, dir, "src/a.go", "a")
+
+	_, _, stderr := runCmdStderr(t, "verify", "check", "--exclude", "vendor/**", "-e")
+	if !bytes.Contains([]byte(stderr), []byte("src/a.go")) {
+		t.Errorf("stderr missing non-excluded path:\n%s", stderr)
+	}
+	if bytes.Contains([]byte(stderr), []byte("vendor/lib.go")) {
+		t.Errorf("stderr should not list excluded path:\n%s", stderr)
+	}
+}
+
+func TestExplain_VerifyJSON(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+
+	code, stdout, stderr := runCmdStderr(t, "verify", "check", "--explain", "--json")
+	if code != 1 {
+		t.Errorf("verify (no marker) JSON: code = %d, want 1", code)
+	}
+	if stderr != "" {
+		t.Errorf("--explain --json wrote to stderr: %q", stderr)
+	}
+	var doc struct {
+		Key    string   `json:"key"`
+		Scope  []string `json:"scope"`
+		Hasher string   `json:"hasher"`
+		State  string   `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("stdout not JSON: %v\n%s", err, stdout)
+	}
+	if doc.Key != "check" {
+		t.Errorf("key = %q, want check", doc.Key)
+	}
+	if doc.Hasher != "git-tree" {
+		t.Errorf("hasher = %q, want git-tree", doc.Hasher)
+	}
+	if doc.State != "no marker" {
+		t.Errorf("state = %q, want %q", doc.State, "no marker")
+	}
+	found := false
+	for _, p := range doc.Scope {
+		if p == "src/a.go" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("scope missing src/a.go: %v", doc.Scope)
+	}
+}
+
+func TestExplain_JSONRequiresExplain(t *testing.T) {
+	initRepo(t)
+	if code, _ := runCmd(t, "verify", "check", "--json"); code != 2 {
+		t.Errorf("--json without --explain: code = %d, want 2", code)
+	}
+}
+
+func TestExplain_StatusListsScope(t *testing.T) {
+	dir := initRepo(t)
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	writeRepoFile(t, dir, "seed.txt", "edited")
+
+	code, stdout, stderr := runCmdStderr(t, "status", "check", "-e")
+	if code != 1 {
+		t.Errorf("status mismatch: code = %d, want 1", code)
+	}
+	if !bytes.Contains([]byte(stderr), []byte("scope:")) {
+		t.Errorf("stderr missing scope listing:\n%s", stderr)
+	}
+	if !bytes.Contains([]byte(stdout), []byte("state:      mismatch")) {
+		t.Errorf("stdout missing existing status block:\n%s", stdout)
+	}
+}
+
+func TestExplain_StatusJSON(t *testing.T) {
+	dir := initRepo(t)
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	writeRepoFile(t, dir, "seed.txt", "edited")
+
+	code, stdout, _ := runCmdStderr(t, "status", "check", "--explain", "--json")
+	if code != 1 {
+		t.Errorf("status JSON mismatch: code = %d, want 1", code)
+	}
+	var doc struct {
+		Key    string   `json:"key"`
+		Scope  []string `json:"scope"`
+		Hasher string   `json:"hasher"`
+		State  string   `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("stdout not JSON: %v\n%s", err, stdout)
+	}
+	if doc.State != "mismatch" {
+		t.Errorf("state = %q, want mismatch", doc.State)
+	}
+	if doc.Hasher != "git-tree" {
+		t.Errorf("hasher = %q", doc.Hasher)
+	}
+}
+
+func TestExplain_RunListsScopeOnSkip(t *testing.T) {
+	initRepo(t)
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	// Match → child must not run; --explain still emits scope + state.
+	code, _, stderr := runCmdStderr(t, "run", "check", "-e", "--", "false")
+	if code != 0 {
+		t.Errorf("run skip with --explain: code = %d, want 0", code)
+	}
+	if !bytes.Contains([]byte(stderr), []byte("state: match")) {
+		t.Errorf("stderr missing state line:\n%s", stderr)
+	}
+}
+
+func TestExplain_RunJSONOnSkip(t *testing.T) {
+	initRepo(t)
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	code, stdout, _ := runCmdStderr(t, "run", "check", "--explain", "--json", "--", "false")
+	if code != 0 {
+		t.Errorf("run skip JSON: code = %d, want 0", code)
+	}
+	var doc struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("stdout not JSON: %v\n%s", err, stdout)
+	}
+	if doc.State != "match" {
+		t.Errorf("state = %q, want match", doc.State)
 	}
 }
