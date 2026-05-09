@@ -217,21 +217,14 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 	case res.ownDigestDiff:
 		fmt.Fprintln(out, "state:      mismatch (digest differs)")
 		return &ExitError{Code: 1}
+	case res.ttl.expired:
+		fmt.Fprintf(out, "state:      mismatch (expired by ttl: %s, marker is %s old)\n", c.gate.TTL, formatAge(res.ttl.age))
+		return &ExitError{Code: 1}
 	case !res.matched:
 		fmt.Fprintf(out, "state:      mismatch (%s)\n", res.reason)
 		return &ExitError{Code: 1}
-	}
-
-	ttl, err := checkTTL(c.gate, m)
-	if err != nil {
-		return &ExitError{Code: 2, Err: err}
-	}
-	switch {
-	case ttl.expired:
-		fmt.Fprintf(out, "state:      mismatch (expired by ttl: %s, marker is %s old)\n", c.gate.TTL, formatAge(ttl.age))
-		return &ExitError{Code: 1}
-	case ttl.configured:
-		fmt.Fprintf(out, "state:      match (expires in %s)\n", formatAge(ttl.ttl-ttl.age))
+	case res.ttl.configured:
+		fmt.Fprintf(out, "state:      match (expires in %s)\n", formatAge(res.ttl.ttl-res.ttl.age))
 		return nil
 	default:
 		fmt.Fprintln(out, "state:      match")

@@ -1,12 +1,9 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
-
-	"github.com/go-to-k/markgate/internal/state"
 )
 
 func newVerifyCmd() *cobra.Command {
@@ -32,35 +29,14 @@ func newVerifyCmd() *cobra.Command {
 			return &ExitError{Code: 2, Err: evalErr}
 		}
 
-		// TTL is surfaced only at the parent level: a fresh-by-digest parent
-		// can still mismatch when its own marker is older than gate.TTL.
-		// TODO(#28+#29): TTL propagation through composes chain.
-		var ttlMessage string
-		if res.matched {
-			m, loadErr := state.Load(c.markerPath)
-			if loadErr != nil && !errors.Is(loadErr, state.ErrNotFound) {
-				return &ExitError{Code: 2, Err: loadErr}
-			}
-			if m != nil {
-				ttl, ttlErr := checkTTL(c.gate, m)
-				if ttlErr != nil {
-					return &ExitError{Code: 2, Err: ttlErr}
-				}
-				if ttl.expired {
-					res.matched = false
-					ttlMessage = fmt.Sprintf(
-						"markgate: state mismatch (expired by ttl: %s, marker is %s old)\n",
-						c.gate.TTL, formatAge(ttl.age))
-				}
-			}
-		}
-
 		label := stateLabel(res)
 		if emitErr := emitExplain(c, explain, cmd.OutOrStdout(), cmd.ErrOrStderr(), label); emitErr != nil {
 			return &ExitError{Code: 2, Err: emitErr}
 		}
-		if ttlMessage != "" {
-			fmt.Fprint(cmd.ErrOrStderr(), ttlMessage)
+		if res.ttl.expired {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"markgate: state mismatch (expired by ttl: %s, marker is %s old)\n",
+				c.gate.TTL, formatAge(res.ttl.age))
 		}
 		if !res.matched {
 			return &ExitError{Code: 1}

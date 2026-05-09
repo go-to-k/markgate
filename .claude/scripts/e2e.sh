@@ -344,6 +344,26 @@ EOF
 $MG verify bad >/dev/null 2>&1
 assert_eq "1mo rejected at config load exit=2" "2" "$?"
 
+# TTL propagates through composes chain: child's expired TTL must
+# fail the parent even when parent's own marker is fresh.
+new_repo
+
+cat > .markgate.yml <<'EOF'
+gates:
+  child:
+    hash: git-tree
+    ttl: 2s
+  parent:
+    composes: [child]
+EOF
+$MG set child >/dev/null 2>&1
+$MG set parent >/dev/null 2>&1
+$MG verify parent >/dev/null 2>&1
+assert_eq "parent fresh while child fresh exit=0" "0" "$?"
+sleep 3
+$MG verify parent >/dev/null 2>&1
+assert_eq "parent inherits child TTL expiry exit=1" "1" "$?"
+
 cyan "=== #31 verify --explain ==="
 new_repo
 
