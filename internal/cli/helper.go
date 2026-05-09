@@ -4,15 +4,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/go-to-k/markgate/internal/config"
+	"github.com/go-to-k/markgate/internal/duration"
 	"github.com/go-to-k/markgate/internal/gitutil"
 	"github.com/go-to-k/markgate/internal/hasher"
 	"github.com/go-to-k/markgate/internal/key"
 	"github.com/go-to-k/markgate/internal/state"
 )
+
+// now is the package's clock. Tests override it to advance time without
+// waiting; production code MUST go through this indirection rather than
+// calling time.Now directly.
+var now = time.Now
 
 // EnvStateDir overrides the directory that stores marker files.
 // Precedence: --state-dir flag > this env > gate.StateDir in
@@ -162,16 +169,88 @@ func validateGate(g config.Gate) error {
 	}
 }
 
+// ttlExpiry holds the verdict of a TTL check: when expired, age and ttl
+// describe the offence (used in --explain-style messages and status
+// output). When the gate has no TTL configured or the marker is fresh,
+// expired is false and the other fields are zero.
+type ttlExpiry struct {
+	configured bool
+	expired    bool
+	ttl        time.Duration
+	age        time.Duration
+}
+
+// checkTTL parses gate.TTL (if any) and compares it against the marker's
+// age. Returns a non-nil error only on a malformed TTL string; that error
+// path is unreachable when the marker came from a config that already
+// passed config.Load's validation, but CLI overrides bypass that path so
+// we still defend here.
+func checkTTL(gate config.Gate, m *state.Marker) (ttlExpiry, error) {
+	if gate.TTL == "" {
+		return ttlExpiry{}, nil
+	}
+	ttl, err := duration.Parse(gate.TTL)
+	if err != nil {
+		return ttlExpiry{}, err
+	}
+	age := now().Sub(m.CreatedAt)
+	return ttlExpiry{
+		configured: true,
+		expired:    age > ttl,
+		ttl:        ttl,
+		age:        age,
+	}, nil
+}
+
+// formatAge renders d in the d/h/m/s shape used in TTL messages and
+// status output (e.g. "8d3h", "4h7m", "12s"). The two largest non-zero
+// components are kept; smaller ones are dropped to stay readable.
+func formatAge(d time.Duration) string {
+	if d < 0 {
+		d = -d
+	}
+	days := d / (24 * time.Hour)
+	d -= days * 24 * time.Hour
+	hours := d / time.Hour
+	d -= hours * time.Hour
+	mins := d / time.Minute
+	d -= mins * time.Minute
+	secs := d / time.Second
+	switch {
+	case days > 0:
+		if hours > 0 {
+			return fmt.Sprintf("%dd%dh", days, hours)
+		}
+		return fmt.Sprintf("%dd", days)
+	case hours > 0:
+		if mins > 0 {
+			return fmt.Sprintf("%dh%dm", hours, mins)
+		}
+		return fmt.Sprintf("%dh", hours)
+	case mins > 0:
+		if secs > 0 {
+			return fmt.Sprintf("%dm%ds", mins, secs)
+		}
+		return fmt.Sprintf("%dm", mins)
+	default:
+		return fmt.Sprintf("%ds", secs)
+	}
+}
+
 // newMarker computes the current digest and returns a marker ready to save.
-// HEAD is recorded only for git-tree, to aid status output.
+// HEAD is recorded only for git-tree, to aid status output. CreatedAt is
+// stamped here (via the package's now indirection) rather than left for
+// state.Save to fill in, so tests that pin the clock for TTL coverage
+// observe the pinned value.
 func newMarker(c *gateCtx) (*state.Marker, error) {
 	digest, err := c.hasher.Hash(c.repo)
 	if err != nil {
 		return nil, err
 	}
 	m := &state.Marker{
-		HashType: c.hasher.Type(),
-		Digest:   digest,
+		HashType:  c.hasher.Type(),
+		Digest:    digest,
+		CreatedAt: now().UTC(),
 	}
 	if _, ok := c.hasher.(hasher.GitTree); ok {
 		if head, err := c.repo.HeadSHA(); err == nil {

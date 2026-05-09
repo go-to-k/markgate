@@ -9,7 +9,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
+
+// withClock pins the package's clock to a fixed instant for the duration
+// of t and restores the real clock when t finishes.
+func withClock(t *testing.T, instant time.Time) {
+	t.Helper()
+	prev := now
+	now = func() time.Time { return instant }
+	t.Cleanup(func() { now = prev })
+}
 
 // runCmd drives the root command with the given args and returns the exit
 // code (0 match, 1 mismatch, 2 error) plus captured stdout.
@@ -781,5 +791,108 @@ func TestCompletion_NoConfigSilent(t *testing.T) {
 	// so neither an alpha-style key nor an error string should appear.
 	if bytes.Contains([]byte(out), []byte("Error")) {
 		t.Errorf("completion errored on missing config:\n%s", out)
+	}
+}
+
+func TestTTL_ExpiredVerifyFails(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  integ-destroy:\n    hash: git-tree\n    ttl: 7d\n")
+
+	t0 := time.Now().UTC()
+	withClock(t, t0)
+	if code, _ := runCmd(t, "set", "integ-destroy"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+
+	withClock(t, t0.Add(8*24*time.Hour+3*time.Hour))
+	if code, _ := runCmd(t, "verify", "integ-destroy"); code != 1 {
+		t.Errorf("verify after ttl expiry: code = %d, want 1", code)
+	}
+}
+
+func TestTTL_FreshVerifyPasses(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  integ-destroy:\n    hash: git-tree\n    ttl: 7d\n")
+
+	t0 := time.Now().UTC()
+	withClock(t, t0)
+	if code, _ := runCmd(t, "set", "integ-destroy"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+
+	withClock(t, t0.Add(3*24*time.Hour))
+	if code, _ := runCmd(t, "verify", "integ-destroy"); code != 0 {
+		t.Errorf("verify within ttl: code = %d, want 0", code)
+	}
+}
+
+func TestTTL_SetResets(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  integ-destroy:\n    hash: git-tree\n    ttl: 7d\n")
+
+	t0 := time.Now().UTC()
+	withClock(t, t0)
+	if code, _ := runCmd(t, "set", "integ-destroy"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	// Advance past the TTL...
+	t1 := t0.Add(8 * 24 * time.Hour)
+	withClock(t, t1)
+	// ...re-set restarts the countdown.
+	if code, _ := runCmd(t, "set", "integ-destroy"); code != 0 {
+		t.Fatalf("re-set: %d", code)
+	}
+	if code, _ := runCmd(t, "verify", "integ-destroy"); code != 0 {
+		t.Errorf("verify just after re-set: code = %d, want 0", code)
+	}
+	// Still within the new TTL window.
+	withClock(t, t1.Add(6*24*time.Hour))
+	if code, _ := runCmd(t, "verify", "integ-destroy"); code != 0 {
+		t.Errorf("verify within renewed ttl: code = %d, want 0", code)
+	}
+}
+
+func TestTTL_ParseFormats(t *testing.T) {
+	for _, s := range []string{"7d", "2w", "12h", "1h30m", "1d12h"} {
+		dir := initRepo(t)
+		writeRepoFile(t, dir, ".markgate.yml",
+			"gates:\n  g:\n    hash: git-tree\n    ttl: "+s+"\n")
+		if code, _ := runCmd(t, "set", "g"); code != 0 {
+			t.Errorf("ttl=%q: set: code = %d, want 0", s, code)
+		}
+		if code, _ := runCmd(t, "verify", "g"); code != 0 {
+			t.Errorf("ttl=%q: verify: code = %d, want 0", s, code)
+		}
+	}
+}
+
+func TestTTL_RejectsMonths(t *testing.T) {
+	dir := initRepo(t)
+
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  g:\n    hash: git-tree\n    ttl: 1m\n")
+	if code, _ := runCmd(t, "set", "g"); code != 0 {
+		t.Errorf("ttl=1m (minutes, Go-standard): code = %d, want 0", code)
+	}
+
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  g:\n    hash: git-tree\n    ttl: 1mo\n")
+	if code, _ := runCmd(t, "set", "g"); code != 2 {
+		t.Errorf("ttl=1mo (months, unsupported): code = %d, want 2", code)
+	}
+}
+
+func TestTTL_MalformedRejectedAtConfigLoad(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  g:\n    hash: git-tree\n    ttl: foo\n")
+	if code, _ := runCmd(t, "set", "g"); code != 2 {
+		t.Errorf("malformed ttl: code = %d, want 2", code)
+	}
+	if code, _ := runCmd(t, "verify", "g"); code != 2 {
+		t.Errorf("malformed ttl on verify: code = %d, want 2", code)
 	}
 }

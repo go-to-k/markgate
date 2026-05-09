@@ -2,6 +2,7 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -16,7 +17,7 @@ func newVerifyCmd() *cobra.Command {
 		ValidArgsFunction: gateKeyCompletion,
 	}
 	overrides := addGateFlags(cmd)
-	cmd.RunE = func(_ *cobra.Command, args []string) error {
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		c, err := newGateCtx(resolveKey(args), overrides)
 		if err != nil {
 			return err
@@ -33,6 +34,16 @@ func newVerifyCmd() *cobra.Command {
 			return &ExitError{Code: 2, Err: err}
 		}
 		if m.HashType != c.hasher.Type() || m.Digest != digest {
+			return &ExitError{Code: 1}
+		}
+		ttl, err := checkTTL(c.gate, m)
+		if err != nil {
+			return &ExitError{Code: 2, Err: err}
+		}
+		if ttl.expired {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"markgate: state mismatch (expired by ttl: %s, marker is %s old)\n",
+				c.gate.TTL, formatAge(ttl.age))
 			return &ExitError{Code: 1}
 		}
 		return nil

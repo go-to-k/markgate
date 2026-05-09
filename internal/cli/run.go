@@ -62,7 +62,13 @@ func runE(cmd *cobra.Command, args []string, overrides *gateFlagValues) error {
 			return &ExitError{Code: 2, Err: hashErr}
 		}
 		if m.HashType == c.hasher.Type() && m.Digest == digest {
-			return nil
+			ttl, ttlErr := checkTTL(c.gate, m)
+			if ttlErr != nil {
+				return &ExitError{Code: 2, Err: ttlErr}
+			}
+			if !ttl.expired {
+				return nil
+			}
 		}
 	case errors.Is(loadErr, state.ErrNotFound):
 		// fall through to execution
