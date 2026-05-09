@@ -239,14 +239,14 @@ func (c *gateCtx) staleRequiredChild() (string, error) {
 	return "", nil
 }
 
-// resolveMarkerPath picks the marker file location based on precedence:
+// resolveStateDir picks the marker storage directory based on precedence:
 // --state-dir flag > MARKGATE_STATE_DIR env > gate.StateDir (from
-// .markgate.yml) > default (<gitDir>/markgate). When an override is
-// used, the "markgate" subdirectory is not injected: the user-specified
+// .markgate.yml) > default (<gitDir>/markgate). When an override is used,
+// the "markgate" subdirectory is not injected: the user-specified
 // directory is treated as the final storage location. Relative override
 // paths resolve against the repo top-level so the location is stable
 // across cwds (e.g. when invoked from a git hook).
-func resolveMarkerPath(overrides *gateFlagValues, gate config.Gate, topLevel, gitDir, k string) string {
+func resolveStateDir(overrides *gateFlagValues, gate config.Gate, topLevel, gitDir string) string {
 	dir := ""
 	switch {
 	case overrides != nil && overrides.stateDir != "":
@@ -257,12 +257,20 @@ func resolveMarkerPath(overrides *gateFlagValues, gate config.Gate, topLevel, gi
 		dir = gate.StateDir
 	}
 	if dir == "" {
-		return state.Path(gitDir, k)
+		return filepath.Join(gitDir, "markgate")
 	}
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(topLevel, dir)
 	}
-	return state.PathIn(dir, k)
+	return dir
+}
+
+// resolveMarkerPath returns the marker file path for key k. Thin wrapper
+// over resolveStateDir so per-key callers and the bare-status walker
+// share one precedence-resolution path (no lockstep invariant to
+// maintain by hand).
+func resolveMarkerPath(overrides *gateFlagValues, gate config.Gate, topLevel, gitDir, k string) string {
+	return state.PathIn(resolveStateDir(overrides, gate, topLevel, gitDir), k)
 }
 
 // validateGate enforces the invariants that config.validate also enforces,

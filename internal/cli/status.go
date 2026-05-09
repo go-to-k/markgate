@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -416,29 +415,6 @@ func buildRow(k string, gate config.Gate, h hasher.Hasher, repo *gitutil.Repo, m
 		row.note = noteUnconfig
 	}
 	return row, nil
-}
-
-// resolveStateDir mirrors resolveMarkerPath's precedence chain but
-// returns just the directory, key-independent. Keep these two helpers
-// in lockstep — the bare-status listing must walk the same dir the
-// per-key path writes into.
-func resolveStateDir(overrides *gateFlagValues, gate config.Gate, topLevel, gitDir string) string {
-	dir := ""
-	switch {
-	case overrides != nil && overrides.stateDir != "":
-		dir = overrides.stateDir
-	case os.Getenv(EnvStateDir) != "":
-		dir = os.Getenv(EnvStateDir)
-	case gate.StateDir != "":
-		dir = gate.StateDir
-	}
-	if dir == "" {
-		return filepath.Join(gitDir, "markgate")
-	}
-	if !filepath.IsAbs(dir) {
-		dir = filepath.Join(topLevel, dir)
-	}
-	return dir
 }
 
 func writeJSON(out io.Writer, v any) error {
