@@ -69,10 +69,15 @@ func newConfigLintCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "lint",
-		Short: "Report dead globs and unknown fields in .markgate.yml",
+		Short: "Report typos and config errors in .markgate.yml",
 		Long: "Walks .markgate.yml and warns on:\n" +
 			"  - include/exclude globs that match zero files in the working tree\n" +
-			"  - unknown top-level or per-gate keys (typos, leftovers).\n\n" +
+			"  - unknown top-level or per-gate keys (typos, leftovers)\n" +
+			"  - unknown hash type, malformed ttl, composes+requires both set\n" +
+			"  - composes/requires entries that name an undeclared gate\n" +
+			"  - self-references and cycles between gates.\n\n" +
+			"Every rule that would make `markgate run` exit 2 is surfaced here\n" +
+			"as a warning, so a clean lint means the config will load.\n\n" +
 			"Exit codes: 0 clean, 1 warnings, 2 parse / read error.",
 		Args: cobra.NoArgs,
 	}
@@ -129,10 +134,14 @@ func runConfigLint(out io.Writer, jsonOut bool) error {
 	return nil
 }
 
-// collectFindings walks the YAML tree for unknown keys and the typed
-// config for dead include/exclude globs, returning the merged warning
-// set. A non-nil error means a glob pattern was malformed (config
-// error, not finding) — caller surfaces it as exit 2.
+// collectFindings walks the YAML tree for unknown keys, the typed
+// config for dead include/exclude globs, and the shared validator for
+// every rule Load enforces at runtime (unknown hash, ttl parse,
+// composes+requires both set, undeclared / self-referencing /
+// cycling child gates). Sourcing those last from config.Validate
+// keeps lint from drifting away from runtime validation as new rules
+// land. A non-nil error means a glob pattern was malformed — caller
+// surfaces it as exit 2.
 func collectFindings(topLevel string, root *yaml.Node, cfg *config.Config) ([]lintFinding, error) {
 	findings := unknownFieldFindings(root)
 	dead, err := deadGlobFindings(topLevel, cfg)
@@ -140,6 +149,13 @@ func collectFindings(topLevel string, root *yaml.Node, cfg *config.Config) ([]li
 		return nil, err
 	}
 	findings = append(findings, dead...)
+	for _, f := range cfg.Validate() {
+		findings = append(findings, lintFinding{
+			Path:     f.Path,
+			Severity: "warning",
+			Message:  f.Message,
+		})
+	}
 	return findings, nil
 }
 

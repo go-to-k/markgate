@@ -1663,6 +1663,146 @@ func TestConfigLint_KnowsAllGateFields(t *testing.T) {
 	}
 }
 
+// TestConfigLint_UndeclaredRequiresRef covers the original report:
+// a typo inside requires used to slide through lint and only fail at
+// runtime with exit 2. lint now mirrors config.Validate so the typo
+// surfaces as a warning before the user runs the gate.
+func TestConfigLint_UndeclaredRequiresRef(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n"+
+			"  check:\n    hash: files\n    include: [\"src/**\"]\n"+
+			"  docs:\n    hash: files\n    include: [\"src/**\"]\n"+
+			"  verify-pr:\n    requires: [check, doaaaaaaacs]\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 1 {
+		t.Errorf("undeclared requires ref: code = %d, want 1; out:\n%s", code, out)
+	}
+	if !strings.Contains(out, `gates.verify-pr: references undeclared gate "doaaaaaaacs"`) {
+		t.Errorf("missing undeclared-ref warning, got:\n%s", out)
+	}
+}
+
+func TestConfigLint_UndeclaredComposesRef(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  parent:\n    composes: [ghost]\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 1 {
+		t.Errorf("undeclared composes ref: code = %d, want 1; out:\n%s", code, out)
+	}
+	if !strings.Contains(out, `gates.parent: references undeclared gate "ghost"`) {
+		t.Errorf("missing undeclared-ref warning, got:\n%s", out)
+	}
+}
+
+func TestConfigLint_BothComposesAndRequires(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n"+
+			"  child:\n    hash: git-tree\n"+
+			"  parent:\n    composes: [child]\n    requires: [child]\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 1 {
+		t.Errorf("composes+requires both set: code = %d, want 1; out:\n%s", code, out)
+	}
+	if !strings.Contains(out, "gates.parent: composes and requires cannot both be set") {
+		t.Errorf("missing both-set warning, got:\n%s", out)
+	}
+}
+
+func TestConfigLint_UnknownHash(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  x:\n    hash: bogus\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 1 {
+		t.Errorf("unknown hash: code = %d, want 1; out:\n%s", code, out)
+	}
+	if !strings.Contains(out, `gates.x: unknown hash "bogus"`) {
+		t.Errorf("missing unknown-hash warning, got:\n%s", out)
+	}
+}
+
+func TestConfigLint_TTLParseError(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "foo.txt", "x")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  cache:\n    hash: files\n    include: [\"*.txt\"]\n    ttl: 5xs\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 1 {
+		t.Errorf("ttl parse: code = %d, want 1; out:\n%s", code, out)
+	}
+	if !strings.Contains(out, "gates.cache.ttl:") {
+		t.Errorf("missing ttl warning, got:\n%s", out)
+	}
+}
+
+func TestConfigLint_SelfReference(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  a:\n    composes: [a]\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 1 {
+		t.Errorf("self-ref: code = %d, want 1; out:\n%s", code, out)
+	}
+	if !strings.Contains(out, "gates.a: cycle detected (self-reference)") {
+		t.Errorf("missing self-reference warning, got:\n%s", out)
+	}
+	// findCycle's general path must not double-report the self-loop.
+	if strings.Count(out, "cycle detected") != 1 {
+		t.Errorf("self-reference reported more than once:\n%s", out)
+	}
+}
+
+func TestConfigLint_Cycle(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n"+
+			"  a:\n    composes: [b]\n"+
+			"  b:\n    requires: [c]\n"+
+			"  c:\n    composes: [a]\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 1 {
+		t.Errorf("cycle: code = %d, want 1; out:\n%s", code, out)
+	}
+	if !strings.Contains(out, "gates: cycle detected") {
+		t.Errorf("missing cycle warning, got:\n%s", out)
+	}
+}
+
+// TestConfigLint_AggregatesMultipleFindings covers the design intent
+// of routing validate's rules through Validate(): a config with both
+// a lint-only finding (dead glob) and a runtime-error finding
+// (undeclared ref) reports both, instead of validate short-circuiting
+// before lint can finish its walk.
+func TestConfigLint_AggregatesMultipleFindings(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n"+
+			"  docs:\n    hash: files\n    include: [\"docss/**\"]\n"+
+			"  verify-pr:\n    requires: [ghost]\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 1 {
+		t.Errorf("aggregate: code = %d, want 1; out:\n%s", code, out)
+	}
+	if !strings.Contains(out, "gates.docs.include[0]: 'docss/**' matches 0 files") {
+		t.Errorf("missing dead-glob warning, got:\n%s", out)
+	}
+	if !strings.Contains(out, `gates.verify-pr: references undeclared gate "ghost"`) {
+		t.Errorf("missing undeclared-ref warning, got:\n%s", out)
+	}
+}
+
 // TestStatus_BareRecursesThroughRequires covers the cdkd report:
 // single-key status correctly recurses through requires/composes,
 // but bare `status` (list form) used to skip the recursion and showed

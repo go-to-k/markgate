@@ -314,6 +314,38 @@ EOF
 $MG config lint >/dev/null 2>&1
 assert_eq "lint malformed glob exit=2" "2" "$?"
 
+# Lint surfaces every rule that would make `markgate run` exit 2 (the
+# config.Validate-shared rules — undeclared refs, both-set, unknown
+# hash, ttl parse, cycle), so a clean lint means the config will load.
+cat > .markgate.yml <<'EOF'
+gates:
+  check:
+    hash: files
+    include: ["src/**"]
+  docs:
+    hash: files
+    include: ["src/**"]
+  verify-pr:
+    requires: [check, doaaaaaaacs]
+EOF
+mkdir -p src && echo x > src/a.go
+out=$($MG config lint 2>&1)
+code=$?
+assert_eq "lint undeclared ref exit=1" "1" "$code"
+assert_contains "lint flags undeclared ref" "doaaaaaaacs" "$out"
+
+cat > .markgate.yml <<'EOF'
+gates:
+  cache:
+    hash: files
+    include: ["src/**"]
+    ttl: 5xs
+EOF
+out=$($MG config lint 2>&1)
+code=$?
+assert_eq "lint ttl parse exit=1" "1" "$code"
+assert_contains "lint flags ttl parse error" "gates.cache.ttl" "$out"
+
 cyan "=== #34 TTL ==="
 new_repo
 
