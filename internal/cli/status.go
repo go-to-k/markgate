@@ -45,6 +45,9 @@ func newStatusCmd() *cobra.Command {
 		if m.Head != "" {
 			fmt.Fprintf(out, "head:       %s\n", m.Head)
 		}
+		if c.gate.TTL != "" {
+			fmt.Fprintf(out, "ttl:        %s\n", c.gate.TTL)
+		}
 
 		switch {
 		case m.HashType != c.hasher.Type():
@@ -53,6 +56,19 @@ func newStatusCmd() *cobra.Command {
 		case m.Digest != digest:
 			fmt.Fprintln(out, "state:      mismatch (digest differs)")
 			return &ExitError{Code: 1}
+		}
+
+		ttl, err := checkTTL(c.gate, m)
+		if err != nil {
+			return &ExitError{Code: 2, Err: err}
+		}
+		switch {
+		case ttl.expired:
+			fmt.Fprintf(out, "state:      mismatch (expired by ttl: %s, marker is %s old)\n", c.gate.TTL, formatAge(ttl.age))
+			return &ExitError{Code: 1}
+		case ttl.configured:
+			fmt.Fprintf(out, "state:      match (expires in %s)\n", formatAge(ttl.ttl-ttl.age))
+			return nil
 		default:
 			fmt.Fprintln(out, "state:      match")
 			return nil

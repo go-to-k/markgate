@@ -14,6 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/go-to-k/markgate/internal/duration"
 	"github.com/go-to-k/markgate/internal/key"
 )
 
@@ -41,6 +42,12 @@ type Gate struct {
 	// the --state-dir flag). Committing an absolute path is an anti-pattern
 	// because it won't exist on other machines; prefer a relative path.
 	StateDir string `yaml:"state_dir,omitempty"`
+	// TTL, if non-empty, makes verify treat a marker older than this
+	// duration as a mismatch even when the digest still matches. Useful
+	// for gates that verify external state (e.g. cloud APIs) that drift
+	// independently of the repo. Format is the union of time.ParseDuration
+	// and the d/w extension (see internal/duration).
+	TTL string `yaml:"ttl,omitempty"`
 }
 
 // LoadStrict is like Load but rejects unknown YAML fields, surfacing typos
@@ -99,6 +106,11 @@ func (c *Config) validate() error {
 			}
 		default:
 			return fmt.Errorf("gates.%s: unknown hash %q (want %q or %q)", k, g.Hash, HashGitTree, HashFiles)
+		}
+		if g.TTL != "" {
+			if _, err := duration.Parse(g.TTL); err != nil {
+				return fmt.Errorf("gates.%s.ttl: %w", k, err)
+			}
 		}
 	}
 	return nil

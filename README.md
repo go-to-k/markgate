@@ -306,6 +306,7 @@ Per-gate fields:
 | `include` | glob list; required for `hash: files` |
 | `exclude` | glob list |
 | `state_dir` | optional override of marker storage location — see [Sharing markers](#sharing-markers-across-machines-ci--teammates) |
+| `ttl` | optional wall-clock expiry for the marker — see [Wall-clock expiry (`ttl`)](#wall-clock-expiry-ttl) |
 
 Example:
 
@@ -334,6 +335,48 @@ match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII). `default` is what
 markgate set               # same as `markgate set default`
 markgate set pre-pr        # a second, independent gate
 ```
+
+### Wall-clock expiry (`ttl`)
+
+By default, a marker stays valid until something in the gate's scope
+changes. Some checks verify against **state outside the repo** that
+drifts on its own — a real-cloud destroy test that depends on AWS
+behaviour, a vulnerability database that gains new CVEs, an SDK
+that's revved upstream. For those, "nothing in the repo changed"
+isn't enough; you also want the marker to expire after a fixed
+amount of wall-clock time.
+
+`ttl:` adds that expiry, **per gate**:
+
+```yaml
+gates:
+  integ-destroy:
+    hash: git-tree
+    ttl: 7d
+```
+
+When `ttl` is set, `markgate verify` (and the verify pre-flight inside
+`markgate run`) treats the marker as a mismatch (exit 1) once
+`now - marker.created_at > ttl`, even if the digest still matches.
+`markgate set` always writes a fresh marker, so the countdown
+restarts on every successful run. Omitting `ttl` (the default)
+preserves existing behaviour exactly — markers never expire on time
+alone.
+
+**Duration syntax** is `time.ParseDuration` extended with `d` and `w`:
+
+| unit | meaning |
+| --- | --- |
+| `s` | seconds |
+| `m` | **minutes** (Go-standard, **not** months) |
+| `h` | hours |
+| `d` | days (24h) |
+| `w` | weeks (168h) |
+
+Mixed units compose: `1h30m`, `1d12h`, `2w3d`. Months (`mo`) and
+years (`y`) are intentionally **not supported** — month length is
+ambiguous (28-31 days) and year length varies with leap years, so
+neither rounds to a fixed duration. Use `d`/`w` for stable expiries.
 
 ### Hashing strategies: `git-tree` vs `files`
 
@@ -584,14 +627,15 @@ naturally:
 | exit | meaning                                                   |
 | ---- | --------------------------------------------------------- |
 | 0    | verified — state matches the marker, safe to skip         |
-| 1    | not verified — no marker, or state differs                |
+| 1    | not verified — no marker, state differs, or TTL expired   |
 | 2    | error — not in a repo, bad config, bad key, etc.          |
 
 ## CLI reference
 
 ```text
 markgate set        [key]              Record the current state hash.
-markgate verify     [key]              Exit 0 match, 1 mismatch, 2 error.
+markgate verify     [key]              Exit 0 match, 1 mismatch (incl. ttl
+                                       expiry), 2 error.
 markgate status     [key]              Show marker + match status.
 markgate clear      [key]              Delete the marker (idempotent).
 markgate run        [key] -- <cmd>...  Sugar for verify + <cmd> + set.
@@ -857,6 +901,15 @@ markers where commit-access already implies trust in the signal.
 - **Can the marker be tampered with?** Yes — it's a JSON file under
   `.git/` (or wherever `--state-dir` points). Trust whoever can write
   to that location. Signed markers are still a future consideration.
+- **My check verifies external state (cloud APIs, vuln DB, …) — how
+  do I force re-runs even when the repo is unchanged?** Add
+  [`ttl:`](#wall-clock-expiry-ttl) to the gate. The marker is treated
+  as a mismatch once it's older than the TTL, even if the digest still
+  matches.
+- **Why isn't `1mo` (months) a valid TTL?** Month length is ambiguous
+  (28-31 days) and would make `now - created_at > 1mo` non-deterministic.
+  Use `30d` or `4w` to be explicit. Same reasoning rules out `1y`.
+  (See [Wall-clock expiry](#wall-clock-expiry-ttl).)
 
 ## License
 

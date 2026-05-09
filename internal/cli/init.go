@@ -50,6 +50,13 @@ gates:
   #   include:
   #     - "docs/**"
   #     - "README.md"
+
+  # Example: wall-clock expiry for gates that verify external state
+  # (cloud APIs, vuln DB, ...). Units: s/m/h/d/w (m is minutes, not
+  # months; mo and y are intentionally rejected).
+  # integ-destroy:
+  #   hash: git-tree
+  #   ttl: 7d
 `
 
 func newInitCmd() *cobra.Command {
