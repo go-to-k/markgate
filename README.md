@@ -338,48 +338,6 @@ markgate set               # same as `markgate set default`
 markgate set pre-pr        # a second, independent gate
 ```
 
-### Wall-clock expiry (`ttl`)
-
-By default, a marker stays valid until something in the gate's scope
-changes. Some checks verify against **state outside the repo** that
-drifts on its own — a real-cloud destroy test that depends on AWS
-behaviour, a vulnerability database that gains new CVEs, an SDK
-that's revved upstream. For those, "nothing in the repo changed"
-isn't enough; you also want the marker to expire after a fixed
-amount of wall-clock time.
-
-`ttl:` adds that expiry, **per gate**:
-
-```yaml
-gates:
-  integ-destroy:
-    hash: git-tree
-    ttl: 7d
-```
-
-When `ttl` is set, `markgate verify` (and the verify pre-flight inside
-`markgate run`) treats the marker as a mismatch (exit 1) once
-`now - marker.created_at > ttl`, even if the digest still matches.
-`markgate set` always writes a fresh marker, so the countdown
-restarts on every successful run. Omitting `ttl` (the default)
-preserves existing behaviour exactly — markers never expire on time
-alone.
-
-**Duration syntax** is `time.ParseDuration` extended with `d` and `w`:
-
-| unit | meaning |
-| --- | --- |
-| `s` | seconds |
-| `m` | **minutes** (Go-standard, **not** months) |
-| `h` | hours |
-| `d` | days (24h) |
-| `w` | weeks (168h) |
-
-Mixed units compose: `1h30m`, `1d12h`, `2w3d`. Months (`mo`) and
-years (`y`) are intentionally **not supported** — month length is
-ambiguous (28-31 days) and year length varies with leap years, so
-neither rounds to a fixed duration. Use `d`/`w` for stable expiries.
-
 ### Hashing strategies: `git-tree` vs `files`
 
 The `hash` field above picks one of two strategies:
@@ -405,74 +363,6 @@ When to use which:
 Rule of thumb: start with `git-tree` (add `exclude` if needed).
 Reach for `files` only when you specifically want the "ignore
 commits that don't touch these paths" semantics.
-
-### Gate dependencies: `composes` vs `requires`
-
-A gate can declare child gates whose freshness is ANDed into its
-own. Two shapes are available:
-
-- **`composes`** (loose) — `verify` of the parent is mismatch when
-  any child (recursively) is mismatch. `set` of the parent is
-  unconditional: marking the parent doesn't care whether children
-  are fresh.
-- **`requires`** (strict) — same `verify` propagation, *and* `set`
-  of the parent is refused (exit 2) unless every required child is
-  fresh. The error names the offending child.
-
-A gate may use one keyword but not both (config load error). Cycles
-and references to undeclared gates are also load errors.
-
-```yaml
-gates:
-  # composes: parent fails verify if any composed child is stale,
-  # but `markgate set verify-pr` is always allowed.
-  verify-pr:
-    composes: [check, docs]
-
-  # requires: same propagation plus `markgate set deploy` is refused
-  # if `migration` is stale.
-  deploy:
-    requires: [migration]
-
-  check:
-    hash: files
-    include: ["src/**", "tests/**"]
-  docs:
-    hash: files
-    include: ["docs/**", "README.md"]
-  migration:
-    hash: files
-    include: ["db/migrations/**"]
-```
-
-#### Parent's own scope
-
-If the parent declares its own `include:`, the parent's digest is
-computed and ANDed with children — both must match. If the parent
-omits `include:` (and only has `composes`/`requires`), there is *no*
-own scope: the parent's freshness is purely the AND of its
-children. This is the right default — without it, a parent gate
-without `include:` would inherit the `git-tree` default and become
-almost always stale.
-
-A `markgate set <parent>` on a deps-only gate still records a
-marker, so `markgate clear <parent>` keeps working as the user
-expects.
-
-#### Which one should I use?
-
-- Reach for **`composes`** when the parent is a *summary* gate that
-  records "all the pieces I care about are currently fresh." Useful
-  for `verify-pr` shaped gates that combine independent checks; you
-  set each child gate as that check finishes, and the parent's
-  verdict tracks them automatically.
-- Reach for **`requires`** when the parent represents an action
-  that *must not happen* unless the children are demonstrably
-  fresh. Deploy after a passed migration, image push after a passed
-  vuln scan, release tag after a passed e2e suite.
-- If unsure, start with `composes`. It's the looser of the two and
-  doesn't change `set` semantics; you can promote to `requires`
-  once you know you want `set` to refuse.
 
 ## Use cases
 
@@ -611,6 +501,122 @@ A working wire-up lives in [go-to-k/cdkd](https://github.com/go-to-k/cdkd):
 - [`.markgate.yml`](https://github.com/go-to-k/cdkd/blob/main/.markgate.yml) — gate definitions.
 - [`.claude/hooks/check-gate.sh`](https://github.com/go-to-k/cdkd/blob/main/.claude/hooks/check-gate.sh) — pre-commit hook that runs `markgate verify` for each gate.
 - [`/check`](https://github.com/go-to-k/cdkd/blob/main/.claude/skills/check/SKILL.md) and [`/check-docs`](https://github.com/go-to-k/cdkd/blob/main/.claude/skills/check-docs/SKILL.md) skills produce the markers (the latter has a diff-based short-circuit to keep the LLM cost low on internal src edits).
+
+## Advanced configuration
+
+Optional features layered on top of the core `.markgate.yml` shape.
+Skip this section unless you hit one of the use cases below; the
+basic gate pattern works without either of them.
+
+### Wall-clock expiry (`ttl`)
+
+By default, a marker stays valid until something in the gate's scope
+changes. Some checks verify against **state outside the repo** that
+drifts on its own — a real-cloud destroy test that depends on AWS
+behaviour, a vulnerability database that gains new CVEs, an SDK
+that's revved upstream. For those, "nothing in the repo changed"
+isn't enough; you also want the marker to expire after a fixed
+amount of wall-clock time.
+
+`ttl:` adds that expiry, **per gate**:
+
+```yaml
+gates:
+  integ-destroy:
+    hash: git-tree
+    ttl: 7d
+```
+
+When `ttl` is set, `markgate verify` (and the verify pre-flight inside
+`markgate run`) treats the marker as a mismatch (exit 1) once
+`now - marker.created_at > ttl`, even if the digest still matches.
+`markgate set` always writes a fresh marker, so the countdown
+restarts on every successful run. Omitting `ttl` (the default)
+preserves existing behaviour exactly — markers never expire on time
+alone.
+
+**Duration syntax** is `time.ParseDuration` extended with `d` and `w`:
+
+| unit | meaning |
+| --- | --- |
+| `s` | seconds |
+| `m` | **minutes** (Go-standard, **not** months) |
+| `h` | hours |
+| `d` | days (24h) |
+| `w` | weeks (168h) |
+
+Mixed units compose: `1h30m`, `1d12h`, `2w3d`. Months (`mo`) and
+years (`y`) are intentionally **not supported** — month length is
+ambiguous (28-31 days) and year length varies with leap years, so
+neither rounds to a fixed duration. Use `d`/`w` for stable expiries.
+
+### Gate dependencies: `composes` vs `requires`
+
+A gate can declare child gates whose freshness is ANDed into its
+own. Two shapes are available:
+
+- **`composes`** (loose) — `verify` of the parent is mismatch when
+  any child (recursively) is mismatch. `set` of the parent is
+  unconditional: marking the parent doesn't care whether children
+  are fresh.
+- **`requires`** (strict) — same `verify` propagation, *and* `set`
+  of the parent is refused (exit 2) unless every required child is
+  fresh. The error names the offending child.
+
+A gate may use one keyword but not both (config load error). Cycles
+and references to undeclared gates are also load errors.
+
+```yaml
+gates:
+  # composes: parent fails verify if any composed child is stale,
+  # but `markgate set verify-pr` is always allowed.
+  verify-pr:
+    composes: [check, docs]
+
+  # requires: same propagation plus `markgate set deploy` is refused
+  # if `migration` is stale.
+  deploy:
+    requires: [migration]
+
+  check:
+    hash: files
+    include: ["src/**", "tests/**"]
+  docs:
+    hash: files
+    include: ["docs/**", "README.md"]
+  migration:
+    hash: files
+    include: ["db/migrations/**"]
+```
+
+#### Parent's own scope
+
+If the parent declares its own `include:`, the parent's digest is
+computed and ANDed with children — both must match. If the parent
+omits `include:` (and only has `composes`/`requires`), there is *no*
+own scope: the parent's freshness is purely the AND of its
+children. This is the right default — without it, a parent gate
+without `include:` would inherit the `git-tree` default and become
+almost always stale.
+
+A `markgate set <parent>` on a deps-only gate still records a
+marker, so `markgate clear <parent>` keeps working as the user
+expects.
+
+#### Which one should I use?
+
+- Reach for **`composes`** when the parent is a *summary* gate that
+  records "all the pieces I care about are currently fresh." Useful
+  for `verify-pr` shaped gates that combine independent checks; you
+  set each child gate as that check finishes, and the parent's
+  verdict tracks them automatically.
+- Reach for **`requires`** when the parent represents an action
+  that *must not happen* unless the children are demonstrably
+  fresh. Deploy after a passed migration, image push after a passed
+  vuln scan, release tag after a passed e2e suite.
+- If unsure, start with `composes`. It's the looser of the two and
+  doesn't change `set` semantics; you can promote to `requires`
+  once you know you want `set` to refuse.
 
 ## Drop into your hook manager
 
