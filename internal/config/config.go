@@ -6,6 +6,7 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -40,6 +41,26 @@ type Gate struct {
 	// the --state-dir flag). Committing an absolute path is an anti-pattern
 	// because it won't exist on other machines; prefer a relative path.
 	StateDir string `yaml:"state_dir,omitempty"`
+}
+
+// LoadStrict is like Load but rejects unknown YAML fields, surfacing typos
+// or leftover keys via the returned error. Default Load stays forgiving so
+// older binaries can read configs that pick up new keys later. A missing
+// file is an error here: strict callers want explicit feedback, not the
+// silent empty-config default Load returns.
+func LoadStrict(topLevel string) (*Config, error) {
+	path := filepath.Join(topLevel, Filename)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	var c Config
+	if err := dec.Decode(&c); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", Filename, err)
+	}
+	return &c, nil
 }
 
 // Load reads topLevel/.markgate.yml. A missing file yields an empty
