@@ -990,6 +990,227 @@ func TestStatusBareAll_StateDirOverride(t *testing.T) {
 	}
 }
 
+// composesConfig is the YAML body for a parent gate using composes:
+// parent depends on src/ and docs/, each with its own files-hash include.
+const composesConfig = `gates:
+  parent:
+    composes: [src, docs]
+  src:
+    hash: files
+    include:
+      - "src/**"
+  docs:
+    hash: files
+    include:
+      - "docs/**"
+`
+
+// requiresConfig mirrors composesConfig but with requires semantics.
+const requiresConfig = `gates:
+  parent:
+    requires: [src, docs]
+  src:
+    hash: files
+    include:
+      - "src/**"
+  docs:
+    hash: files
+    include:
+      - "docs/**"
+`
+
+func TestComposes_VerifyTimePropagation(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.ts", "a")
+	writeRepoFile(t, dir, "docs/x.md", "x")
+	writeRepoFile(t, dir, ".markgate.yml", composesConfig)
+
+	if code, _ := runCmd(t, "set", "src"); code != 0 {
+		t.Fatalf("set src: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "docs"); code != 0 {
+		t.Fatalf("set docs: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "parent"); code != 0 {
+		t.Fatalf("set parent: %d", code)
+	}
+	if code, _ := runCmd(t, "verify", "parent"); code != 0 {
+		t.Errorf("verify parent (all fresh): %d, want 0", code)
+	}
+
+	// Mutate one child's scope: parent must now mismatch.
+	writeRepoFile(t, dir, "docs/x.md", "edited")
+	if code, _ := runCmd(t, "verify", "docs"); code != 1 {
+		t.Errorf("verify docs after edit: %d, want 1", code)
+	}
+	if code, _ := runCmd(t, "verify", "parent"); code != 1 {
+		t.Errorf("verify parent (composed child stale): %d, want 1", code)
+	}
+}
+
+func TestComposes_SetUnchecked(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.ts", "a")
+	writeRepoFile(t, dir, "docs/x.md", "x")
+	writeRepoFile(t, dir, ".markgate.yml", composesConfig)
+
+	// Only src is fresh; docs has never been set. composes must NOT block
+	// `set parent`.
+	if code, _ := runCmd(t, "set", "src"); code != 0 {
+		t.Fatalf("set src: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "parent"); code != 0 {
+		t.Errorf("set parent (composes is loose): %d, want 0", code)
+	}
+}
+
+func TestRequires_SetTimeEnforcement(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.ts", "a")
+	writeRepoFile(t, dir, "docs/x.md", "x")
+	writeRepoFile(t, dir, ".markgate.yml", requiresConfig)
+
+	// docs has no marker yet; set parent must be refused with exit 2 and a
+	// message naming the offending child.
+	code, _ := runCmd(t, "set", "parent")
+	if code != 2 {
+		t.Fatalf("set parent (requires unmet): %d, want 2", code)
+	}
+
+	if code, _ := runCmd(t, "set", "src"); code != 0 {
+		t.Fatalf("set src: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "docs"); code != 0 {
+		t.Fatalf("set docs: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "parent"); code != 0 {
+		t.Errorf("set parent (all required fresh): %d, want 0", code)
+	}
+
+	// Make a required child stale again, then verify that `set parent` is
+	// once more refused.
+	writeRepoFile(t, dir, "src/a.ts", "edited")
+	if code, _ := runCmd(t, "set", "parent"); code != 2 {
+		t.Errorf("set parent (required child stale again): %d, want 2", code)
+	}
+}
+
+func TestRequires_VerifyTimePropagation(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.ts", "a")
+	writeRepoFile(t, dir, "docs/x.md", "x")
+	writeRepoFile(t, dir, ".markgate.yml", requiresConfig)
+
+	if code, _ := runCmd(t, "set", "src"); code != 0 {
+		t.Fatalf("set src: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "docs"); code != 0 {
+		t.Fatalf("set docs: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "parent"); code != 0 {
+		t.Fatalf("set parent: %d", code)
+	}
+	if code, _ := runCmd(t, "verify", "parent"); code != 0 {
+		t.Errorf("verify parent (all fresh): %d, want 0", code)
+	}
+
+	writeRepoFile(t, dir, "src/a.ts", "edited")
+	if code, _ := runCmd(t, "verify", "parent"); code != 1 {
+		t.Errorf("verify parent (required child stale): %d, want 1", code)
+	}
+}
+
+func TestDependency_Cycle(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  a:\n    composes: [b]\n  b:\n    composes: [a]\n")
+	if code, _ := runCmd(t, "verify", "a"); code != 2 {
+		t.Errorf("cycle should produce config load error: %d, want 2", code)
+	}
+}
+
+func TestDependency_MissingChild(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  parent:\n    composes: [ghost]\n")
+	if code, _ := runCmd(t, "verify", "parent"); code != 2 {
+		t.Errorf("missing child should produce config load error: %d, want 2", code)
+	}
+}
+
+func TestDependency_BothFieldsSet(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  child:\n    hash: git-tree\n  parent:\n    composes: [child]\n    requires: [child]\n")
+	if code, _ := runCmd(t, "verify", "parent"); code != 2 {
+		t.Errorf("composes+requires should produce config load error: %d, want 2", code)
+	}
+}
+
+func TestParentScope_None(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.ts", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  parent:\n    composes: [src]\n  src:\n    hash: files\n    include:\n      - \"src/**\"\n")
+
+	if code, _ := runCmd(t, "set", "src"); code != 0 {
+		t.Fatalf("set src: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "parent"); code != 0 {
+		t.Fatalf("set parent (deps-only): %d", code)
+	}
+
+	// Out-of-scope edits MUST NOT invalidate the parent (no own scope =
+	// no git-tree-default freshness).
+	writeRepoFile(t, dir, "unrelated.txt", "noise")
+	if code, _ := runCmd(t, "verify", "parent"); code != 0 {
+		t.Errorf("verify parent (deps-only, unrelated edit): %d, want 0", code)
+	}
+
+	// In-scope edit (child src) propagates.
+	writeRepoFile(t, dir, "src/a.ts", "edited")
+	if code, _ := runCmd(t, "verify", "parent"); code != 1 {
+		t.Errorf("verify parent after src edit: %d, want 1", code)
+	}
+}
+
+func TestParentScope_WithInclude(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.ts", "a")
+	writeRepoFile(t, dir, "rfc/r.md", "rfc")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n"+
+			"  parent:\n    hash: files\n    include:\n      - \"rfc/**\"\n    composes: [src]\n"+
+			"  src:\n    hash: files\n    include:\n      - \"src/**\"\n")
+
+	if code, _ := runCmd(t, "set", "src"); code != 0 {
+		t.Fatalf("set src: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "parent"); code != 0 {
+		t.Fatalf("set parent: %d", code)
+	}
+
+	if code, _ := runCmd(t, "verify", "parent"); code != 0 {
+		t.Errorf("verify parent (all fresh): %d, want 0", code)
+	}
+
+	// Own-scope edit (rfc/) → mismatch.
+	writeRepoFile(t, dir, "rfc/r.md", "edited rfc")
+	if code, _ := runCmd(t, "verify", "parent"); code != 1 {
+		t.Errorf("verify parent after own-scope edit: %d, want 1", code)
+	}
+
+	// Re-set parent (own scope), then mutate a child to confirm child
+	// propagation also fires.
+	if code, _ := runCmd(t, "set", "parent"); code != 0 {
+		t.Fatalf("re-set parent: %d", code)
+	}
+	writeRepoFile(t, dir, "src/a.ts", "edited src")
+	if code, _ := runCmd(t, "verify", "parent"); code != 1 {
+		t.Errorf("verify parent after child edit: %d, want 1", code)
+	}
+}
+
 func TestVersion_PrintsInjected(t *testing.T) {
 	root := newRootCmd("v1.2.3")
 	var stdout bytes.Buffer

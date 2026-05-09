@@ -119,6 +119,58 @@ func TestLoadStrict_AcceptsValid(t *testing.T) {
 	}
 }
 
+func TestLoad_DepsBothFields(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir,
+		"gates:\n  child:\n    hash: git-tree\n  parent:\n    composes: [child]\n    requires: [child]\n")
+	if _, err := Load(dir); err == nil {
+		t.Error("want error when composes and requires are both set")
+	}
+}
+
+func TestLoad_DepsMissingChild(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir,
+		"gates:\n  parent:\n    composes: [ghost]\n")
+	if _, err := Load(dir); err == nil {
+		t.Error("want error when child gate is undeclared")
+	}
+}
+
+func TestLoad_DepsCycle(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir,
+		"gates:\n  a:\n    composes: [b]\n  b:\n    requires: [c]\n  c:\n    composes: [a]\n")
+	if _, err := Load(dir); err == nil {
+		t.Error("want error for a -> b -> c -> a cycle")
+	}
+}
+
+func TestLoad_DepsSelfReference(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir,
+		"gates:\n  a:\n    composes: [a]\n")
+	if _, err := Load(dir); err == nil {
+		t.Error("want error for self-reference")
+	}
+}
+
+func TestLoad_DepsValid(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir,
+		"gates:\n"+
+			"  parent:\n    composes: [a, b]\n"+
+			"  a:\n    hash: git-tree\n"+
+			"  b:\n    hash: git-tree\n")
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatalf("valid config rejected: %v", err)
+	}
+	if got := c.Gate("parent").Composes; len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Errorf("parent.Composes = %v, want [a b]", got)
+	}
+}
+
 func TestGate_DefaultForMissingKey(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, "gates:\n  pre-commit:\n    hash: git-tree\n")

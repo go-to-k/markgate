@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -89,6 +90,9 @@ type gateCtx struct {
 	gate       config.Gate
 	hasher     hasher.Hasher
 	markerPath string
+	// cfg is retained so child gates referenced via composes/requires can be
+	// resolved without re-loading .markgate.yml.
+	cfg *config.Config
 }
 
 func newGateCtx(k string, overrides *gateFlagValues) (*gateCtx, error) {
@@ -124,7 +128,115 @@ func newGateCtx(k string, overrides *gateFlagValues) (*gateCtx, error) {
 		gate:       gate,
 		hasher:     h,
 		markerPath: resolveMarkerPath(overrides, gate, top, gitDir, k),
+		cfg:        cfg,
 	}, nil
+}
+
+// child builds a gateCtx for a child gate referenced via composes/requires.
+// Per-invocation overrides do NOT propagate to children — each child is
+// resolved purely from .markgate.yml so its scope is what its own entry
+// declares. State-dir override flags are also intentionally dropped: the
+// child's storage location follows the child's own state_dir (or default).
+func (c *gateCtx) child(k string) (*gateCtx, error) {
+	if err := key.Validate(k); err != nil {
+		return nil, err
+	}
+	gate := c.cfg.Gate(k)
+	if vErr := validateGate(gate); vErr != nil {
+		return nil, vErr
+	}
+	h, err := hasher.For(gate)
+	if err != nil {
+		return nil, err
+	}
+	return &gateCtx{
+		key:        k,
+		repo:       c.repo,
+		topLevel:   c.topLevel,
+		gitDir:     c.gitDir,
+		gate:       gate,
+		hasher:     h,
+		markerPath: resolveMarkerPath(nil, gate, c.topLevel, c.gitDir, k),
+		cfg:        c.cfg,
+	}, nil
+}
+
+// evalResult is what evaluate returns to callers (verify, status, run).
+// Reason is populated when matched is false so callers can render context.
+// childKey, when set, names the first descendant whose mismatch caused this
+// gate to fail — useful for #24's --explain output and for set-time
+// requires-enforcement messaging.
+type evalResult struct {
+	matched  bool
+	reason   string
+	childKey string
+}
+
+// evaluate computes the recursive freshness verdict for c. It loads the
+// marker, optionally compares the own-scope digest, and ANDs in every
+// composes/requires child. Cycles are impossible here because config
+// validation rejects them.
+func (c *gateCtx) evaluate() (evalResult, error) {
+	if c.gate.HasOwnScope() {
+		m, err := state.Load(c.markerPath)
+		if err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				return evalResult{matched: false, reason: "no marker"}, nil
+			}
+			return evalResult{}, err
+		}
+		digest, err := c.hasher.Hash(c.repo)
+		if err != nil {
+			return evalResult{}, err
+		}
+		if m.HashType != c.hasher.Type() || m.Digest != digest {
+			return evalResult{matched: false, reason: "own digest mismatch"}, nil
+		}
+	} else {
+		// Deps-only gates still need an explicit set to count as fresh: a
+		// brand-new gate with no marker must not pass on first verify just
+		// because all its children happen to be fresh.
+		if _, err := state.Load(c.markerPath); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				return evalResult{matched: false, reason: "no marker"}, nil
+			}
+			return evalResult{}, err
+		}
+	}
+	for _, childKey := range c.gate.Children() {
+		cc, err := c.child(childKey)
+		if err != nil {
+			return evalResult{}, err
+		}
+		res, err := cc.evaluate()
+		if err != nil {
+			return evalResult{}, err
+		}
+		if !res.matched {
+			return evalResult{matched: false, reason: "child " + childKey + " is stale", childKey: childKey}, nil
+		}
+	}
+	return evalResult{matched: true}, nil
+}
+
+// staleRequiredChild returns the key of the first direct requires child
+// whose recursive evaluate is mismatch — for set-time enforcement.
+// Returns "" when every required child is fresh.
+func (c *gateCtx) staleRequiredChild() (string, error) {
+	for _, k := range c.gate.Requires {
+		cc, err := c.child(k)
+		if err != nil {
+			return "", err
+		}
+		res, err := cc.evaluate()
+		if err != nil {
+			return "", err
+		}
+		if !res.matched {
+			return k, nil
+		}
+	}
+	return "", nil
 }
 
 // resolveMarkerPath picks the marker file location based on precedence:
@@ -241,8 +353,13 @@ func formatAge(d time.Duration) string {
 // HEAD is recorded only for git-tree, to aid status output. CreatedAt is
 // stamped here (via the package's now indirection) rather than left for
 // state.Save to fill in, so tests that pin the clock for TTL coverage
-// observe the pinned value.
+// observe the pinned value. Deps-only gates (no own scope) get a sentinel
+// marker so their freshness is purely a function of children but `set`
+// still leaves a record that an explicit `markgate set <key>` happened.
 func newMarker(c *gateCtx) (*state.Marker, error) {
+	if !c.gate.HasOwnScope() {
+		return &state.Marker{HashType: hashTypeDepsOnly}, nil
+	}
 	digest, err := c.hasher.Hash(c.repo)
 	if err != nil {
 		return nil, err
@@ -259,3 +376,8 @@ func newMarker(c *gateCtx) (*state.Marker, error) {
 	}
 	return m, nil
 }
+
+// hashTypeDepsOnly is the sentinel HashType written for gates that have
+// composes/requires but no include of their own. The digest field stays
+// empty: there is nothing to hash. Status output recognises this value.
+const hashTypeDepsOnly = "deps-only"

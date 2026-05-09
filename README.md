@@ -307,6 +307,8 @@ Per-gate fields:
 | `exclude` | glob list |
 | `state_dir` | optional override of marker storage location — see [Sharing markers](#sharing-markers-across-machines-ci--teammates) |
 | `ttl` | optional wall-clock expiry for the marker — see [Wall-clock expiry (`ttl`)](#wall-clock-expiry-ttl) |
+| `composes` | child gate keys whose freshness is ANDed into this one — see [Gate dependencies](#gate-dependencies-composes-vs-requires) |
+| `requires` | like `composes`, but `set` of this gate is refused unless every required child is fresh — see [Gate dependencies](#gate-dependencies-composes-vs-requires) |
 
 Example:
 
@@ -403,6 +405,74 @@ When to use which:
 Rule of thumb: start with `git-tree` (add `exclude` if needed).
 Reach for `files` only when you specifically want the "ignore
 commits that don't touch these paths" semantics.
+
+### Gate dependencies: `composes` vs `requires`
+
+A gate can declare child gates whose freshness is ANDed into its
+own. Two shapes are available:
+
+- **`composes`** (loose) — `verify` of the parent is mismatch when
+  any child (recursively) is mismatch. `set` of the parent is
+  unconditional: marking the parent doesn't care whether children
+  are fresh.
+- **`requires`** (strict) — same `verify` propagation, *and* `set`
+  of the parent is refused (exit 2) unless every required child is
+  fresh. The error names the offending child.
+
+A gate may use one keyword but not both (config load error). Cycles
+and references to undeclared gates are also load errors.
+
+```yaml
+gates:
+  # composes: parent fails verify if any composed child is stale,
+  # but `markgate set verify-pr` is always allowed.
+  verify-pr:
+    composes: [check, docs]
+
+  # requires: same propagation plus `markgate set deploy` is refused
+  # if `migration` is stale.
+  deploy:
+    requires: [migration]
+
+  check:
+    hash: files
+    include: ["src/**", "tests/**"]
+  docs:
+    hash: files
+    include: ["docs/**", "README.md"]
+  migration:
+    hash: files
+    include: ["db/migrations/**"]
+```
+
+#### Parent's own scope
+
+If the parent declares its own `include:`, the parent's digest is
+computed and ANDed with children — both must match. If the parent
+omits `include:` (and only has `composes`/`requires`), there is *no*
+own scope: the parent's freshness is purely the AND of its
+children. This is the right default — without it, a parent gate
+without `include:` would inherit the `git-tree` default and become
+almost always stale.
+
+A `markgate set <parent>` on a deps-only gate still records a
+marker, so `markgate clear <parent>` keeps working as the user
+expects.
+
+#### Which one should I use?
+
+- Reach for **`composes`** when the parent is a *summary* gate that
+  records "all the pieces I care about are currently fresh." Useful
+  for `verify-pr` shaped gates that combine independent checks; you
+  set each child gate as that check finishes, and the parent's
+  verdict tracks them automatically.
+- Reach for **`requires`** when the parent represents an action
+  that *must not happen* unless the children are demonstrably
+  fresh. Deploy after a passed migration, image push after a passed
+  vuln scan, release tag after a passed e2e suite.
+- If unsure, start with `composes`. It's the looser of the two and
+  doesn't change `set` semantics; you can promote to `requires`
+  once you know you want `set` to refuse.
 
 ## Use cases
 
@@ -1015,6 +1085,15 @@ markers where commit-access already implies trust in the signal.
   single hash, so "which files changed since `set`" can't be
   reconstructed. See
   [Debugging a stale gate](#debugging-a-stale-gate).
+- **When should I use `composes` vs `requires`?** Use `composes`
+  when the parent is a *summary* gate ("all the pieces I care about
+  are currently fresh") — `set` of the parent is allowed regardless
+  of child state, but `verify` propagates. Use `requires` when the
+  parent represents an action that must not happen unless every
+  child is demonstrably fresh (deploy after migration, image push
+  after vuln scan): `set` is refused with exit 2 if a required
+  child is stale. See
+  [Gate dependencies](#gate-dependencies-composes-vs-requires).
 
 ## License
 

@@ -7,8 +7,6 @@ import (
 	"io"
 
 	"github.com/spf13/cobra"
-
-	"github.com/go-to-k/markgate/internal/state"
 )
 
 // State labels for the --explain output. Match exactly across text and
@@ -66,7 +64,7 @@ type explainPayload struct {
 //
 // markerState is one of stateMatch / stateMismatch / stateNoMarker and
 // reflects what verify would return for the same context. Callers that
-// already loaded the marker pass the result of explainStateForVerify.
+// already loaded the marker pass the result of gateCtx.evaluate.
 func emitExplain(c *gateCtx, flags *explainFlags, out, errOut io.Writer, markerState string) error {
 	if flags == nil || !flags.enabled {
 		return nil
@@ -99,27 +97,4 @@ func emitExplain(c *gateCtx, flags *explainFlags, out, errOut io.Writer, markerS
 	}
 	fmt.Fprintf(errOut, "state: %s\n", markerState)
 	return nil
-}
-
-// explainStateForVerify computes the state label that --explain should
-// report for c, using the same rules as `verify`: missing marker yields
-// "no marker"; a hash-type or digest mismatch yields "mismatch";
-// otherwise "match". The boolean tracks whether the marker matched, so
-// `run` can decide whether to skip the child without re-loading.
-func explainStateForVerify(c *gateCtx) (label string, matched bool, marker *state.Marker, err error) {
-	m, loadErr := state.Load(c.markerPath)
-	if loadErr != nil {
-		if errors.Is(loadErr, state.ErrNotFound) {
-			return stateNoMarker, false, nil, nil
-		}
-		return "", false, nil, loadErr
-	}
-	digest, hashErr := c.hasher.Hash(c.repo)
-	if hashErr != nil {
-		return "", false, nil, hashErr
-	}
-	if m.HashType != c.hasher.Type() || m.Digest != digest {
-		return stateMismatch, false, m, nil
-	}
-	return stateMatch, true, m, nil
 }

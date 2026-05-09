@@ -21,6 +21,11 @@ func newSetCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if stale, sErr := c.staleRequiredChild(); sErr != nil {
+			return &ExitError{Code: 2, Err: sErr}
+		} else if stale != "" {
+			return &ExitError{Code: 2, Err: fmt.Errorf("set %s: required child %q is stale", c.key, stale)}
+		}
 		m, err := newMarker(c)
 		if err != nil {
 			return &ExitError{Code: 2, Err: err}
