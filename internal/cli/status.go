@@ -272,7 +272,8 @@ func statusListAll(out io.Writer, overrides *gateFlagValues, asJSON bool) error 
 			return &ExitError{Code: 2, Err: hErr}
 		}
 		markerPath := resolveMarkerPath(overrides, gate, top, gitDir, k)
-		row, bErr := buildRow(k, gate, h, repo, markerPath, isConfigured, clock)
+		gctx := newGateCtxWithConfig(k, gate, h, repo, top, gitDir, markerPath, cfg)
+		row, bErr := buildRow(gctx, isConfigured, clock)
 		if bErr != nil {
 			return &ExitError{Code: 2, Err: bErr}
 		}
@@ -344,63 +345,55 @@ func configuredSet(cfg *config.Config) map[string]struct{} {
 	return out
 }
 
-// buildRow skips the digest computation when no marker is present —
-// config-only keys (which dominate "fresh repo" output) shouldn't pay
-// the hash cost. TTL is folded into the note column when the gate
-// matches and a TTL is configured: "expires in 4d" while fresh,
+// buildRow runs the same recursive evaluator that single-key `status`
+// and `verify` use, so the bare list view agrees with them on every
+// gate's freshness. Previously this path skipped composes/requires
+// entirely (deps-only markers always reported match, hash markers
+// only checked their own digest) which made the two views disagree.
+//
+// TTL folds into the note column: "expires in 4d" while fresh,
 // "expired 1d ago" once the deadline has passed (the latter also
 // flips state to mismatch).
-func buildRow(k string, gate config.Gate, h hasher.Hasher, repo *gitutil.Repo, markerPath string, configured bool, clock time.Time) (statusRow, error) {
+func buildRow(c *gateCtx, configured bool, clock time.Time) (statusRow, error) {
 	row := statusRow{
-		key:          k,
+		key:          c.key,
 		configured:   configured,
 		unconfigured: !configured,
 		now:          clock,
 	}
-	m, err := state.Load(markerPath)
+	res, err := c.evaluate()
 	if err != nil {
-		if !errors.Is(err, state.ErrNotFound) {
-			return row, err
-		}
+		return row, err
+	}
+	if res.marker == nil {
 		row.state = stateNoMarker
 		if configured {
 			row.note = noteConfigured
 		}
+		if !configured {
+			row.note = noteUnconfig
+		}
 		return row, nil
 	}
-	row.marker = m
-	mismatch := false
-	if m.Kind == state.KindDepsOnly {
-		// Deps-only marker: no own scope to hash, so freshness depends
-		// on children alone. Bare status doesn't recurse into children
-		// (cost / surprise), so report match here and let the user run
-		// `markgate verify <key>` for the full propagation if it
-		// matters. The presence of the marker proves an explicit set.
-	} else {
-		digest, hashErr := h.Hash(repo)
-		if hashErr != nil {
-			return row, hashErr
-		}
-		mismatch = m.HashType != h.Type() || m.Digest != digest
-	}
-	if mismatch {
+	row.marker = res.marker
+	switch {
+	case res.hashTypeChanged, res.ownDigestDiff:
 		row.state = stateMismatch
 		row.note = noteDigestDiff
-	} else {
+	case res.ttl.expired:
+		row.state = stateMismatch
+		row.note = fmt.Sprintf("expired %s ago", formatAge(res.ttl.age-res.ttl.ttl))
+	case res.childKey != "":
+		row.state = stateMismatch
+		row.note = "child " + res.childKey + " is stale"
+	case res.matched:
 		row.state = stateMatch
-		if gate.TTL != "" {
-			ttl, ttlErr := checkTTL(gate, m)
-			if ttlErr != nil {
-				return row, ttlErr
-			}
-			switch {
-			case ttl.expired:
-				row.state = stateMismatch
-				row.note = fmt.Sprintf("expired %s ago", formatAge(ttl.age-ttl.ttl))
-			case ttl.configured:
-				row.note = fmt.Sprintf("expires in %s", formatAge(ttl.ttl-ttl.age))
-			}
+		if res.ttl.configured {
+			row.note = fmt.Sprintf("expires in %s", formatAge(res.ttl.ttl-res.ttl.age))
 		}
+	default:
+		row.state = stateMismatch
+		row.note = res.reason
 	}
 	if !configured {
 		// (unconfigured) wins over digest / ttl notes: a stray marker

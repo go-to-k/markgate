@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -24,20 +26,34 @@ type lintFinding struct {
 	Message  string `json:"message"`
 }
 
-// gateFields lists the YAML keys recognized inside a gate. Kept in sync
-// with config.Gate's yaml tags; the lint command treats anything else as
-// an unknown field.
-var gateFields = map[string]struct{}{
-	"hash":      {},
-	"include":   {},
-	"exclude":   {},
-	"state_dir": {},
-}
+// gateFields lists the YAML keys recognized inside a gate. Derived
+// from config.Gate's yaml tags via reflection so adding a field to
+// Gate automatically teaches lint about it — no second allowlist to
+// keep in sync (which is how ttl/composes/requires originally drifted).
+var gateFields = yamlFieldNames(reflect.TypeOf(config.Gate{}))
 
-// topFields lists the YAML keys recognized at the document root. Mirrors
-// config.Config's yaml tags.
-var topFields = map[string]struct{}{
-	"gates": {},
+// topFields lists the YAML keys recognized at the document root,
+// derived the same way as gateFields.
+var topFields = yamlFieldNames(reflect.TypeOf(config.Config{}))
+
+// yamlFieldNames returns the set of YAML keys declared on t via
+// `yaml:"name,..."` struct tags. Anonymous tags (e.g. `yaml:"-"`) and
+// fields without a tag are skipped. t must be a struct type; callers
+// pass reflect.TypeOf(SomeStruct{}).
+func yamlFieldNames(t reflect.Type) map[string]struct{} {
+	out := make(map[string]struct{}, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("yaml")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		name := strings.SplitN(tag, ",", 2)[0]
+		if name == "" {
+			continue
+		}
+		out[name] = struct{}{}
+	}
+	return out
 }
 
 func newConfigCmd() *cobra.Command {
