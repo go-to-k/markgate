@@ -162,61 +162,77 @@ func (c *gateCtx) child(k string) (*gateCtx, error) {
 }
 
 // evalResult is what evaluate returns to callers (verify, status, run).
-// Reason is populated when matched is false so callers can render context.
-// childKey, when set, names the first descendant whose mismatch caused this
-// gate to fail — useful for #24's --explain output and for set-time
-// requires-enforcement messaging.
+//
+// matched is the freshness verdict (own scope ANDed with every recursive
+// composes/requires child).
+//
+// reason / childKey explain why matched is false; childKey names the
+// offending descendant for set-time requires enforcement and #24's
+// --explain output.
+//
+// marker / digest / hashTypeChanged / ownDigestDiff carry the work
+// evaluate already did so callers (status, in particular) don't reload
+// or re-hash. marker is nil when no marker exists. digest is empty
+// when the gate has no own scope. hashTypeChanged and ownDigestDiff
+// are only meaningful when marker is non-nil.
 type evalResult struct {
-	matched  bool
-	reason   string
-	childKey string
+	matched         bool
+	reason          string
+	childKey        string
+	marker          *state.Marker
+	digest          string
+	hashTypeChanged bool
+	ownDigestDiff   bool
 }
 
 // evaluate computes the recursive freshness verdict for c. It loads the
 // marker, optionally compares the own-scope digest, and ANDs in every
 // composes/requires child. Cycles are impossible here because config
-// validation rejects them.
+// validation rejects them. The result carries the loaded marker and
+// computed digest so callers don't have to repeat the work.
 func (c *gateCtx) evaluate() (evalResult, error) {
+	m, err := state.Load(c.markerPath)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return evalResult{reason: "no marker"}, nil
+		}
+		return evalResult{}, err
+	}
+	res := evalResult{marker: m}
 	if c.gate.HasOwnScope() {
-		m, err := state.Load(c.markerPath)
-		if err != nil {
-			if errors.Is(err, state.ErrNotFound) {
-				return evalResult{matched: false, reason: "no marker"}, nil
-			}
-			return evalResult{}, err
+		digest, hashErr := c.hasher.Hash(c.repo)
+		if hashErr != nil {
+			return evalResult{}, hashErr
 		}
-		digest, err := c.hasher.Hash(c.repo)
-		if err != nil {
-			return evalResult{}, err
-		}
-		if m.HashType != c.hasher.Type() || m.Digest != digest {
-			return evalResult{matched: false, reason: "own digest mismatch"}, nil
-		}
-	} else {
-		// Deps-only gates still need an explicit set to count as fresh: a
-		// brand-new gate with no marker must not pass on first verify just
-		// because all its children happen to be fresh.
-		if _, err := state.Load(c.markerPath); err != nil {
-			if errors.Is(err, state.ErrNotFound) {
-				return evalResult{matched: false, reason: "no marker"}, nil
-			}
-			return evalResult{}, err
+		res.digest = digest
+		res.hashTypeChanged = m.HashType != c.hasher.Type()
+		res.ownDigestDiff = m.Digest != digest
+		if res.hashTypeChanged || res.ownDigestDiff {
+			res.reason = "own digest mismatch"
+			return res, nil
 		}
 	}
+	// Deps-only path falls through with marker loaded but no digest
+	// work — the marker's mere presence is what proves an explicit set
+	// happened (otherwise a brand-new deps-only gate would pass on first
+	// verify just because its children happen to be fresh).
 	for _, childKey := range c.gate.Children() {
-		cc, err := c.child(childKey)
-		if err != nil {
-			return evalResult{}, err
+		cc, ccErr := c.child(childKey)
+		if ccErr != nil {
+			return evalResult{}, ccErr
 		}
-		res, err := cc.evaluate()
-		if err != nil {
-			return evalResult{}, err
+		childRes, childErr := cc.evaluate()
+		if childErr != nil {
+			return evalResult{}, childErr
 		}
-		if !res.matched {
-			return evalResult{matched: false, reason: "child " + childKey + " is stale", childKey: childKey}, nil
+		if !childRes.matched {
+			res.reason = "child " + childKey + " is stale"
+			res.childKey = childKey
+			return res, nil
 		}
 	}
-	return evalResult{matched: true}, nil
+	res.matched = true
+	return res, nil
 }
 
 // staleRequiredChild returns the key of the first direct requires child

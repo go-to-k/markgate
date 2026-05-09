@@ -106,60 +106,44 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 
 	jsonOnly := explain != nil && explain.json && !explain.enabled
 
-	m, loadErr := state.Load(c.markerPath)
-	if loadErr != nil {
-		if errors.Is(loadErr, state.ErrNotFound) {
-			if explain != nil && explain.enabled {
-				if emitErr := emitExplain(c, explain, out, errOut, stateNoMarker); emitErr != nil {
-					return &ExitError{Code: 2, Err: emitErr}
-				}
-				if explain.json {
-					return &ExitError{Code: 1}
-				}
-				fmt.Fprintf(out, "key:        %s\nstate:      no marker\n", c.key)
-				return &ExitError{Code: 1}
-			}
-			if jsonOnly {
-				row := statusRow{
-					key:          c.key,
-					state:        stateNoMarker,
-					configured:   true,
-					unconfigured: false,
-					note:         noteConfigured,
-				}
-				if writeErr := writeJSON(out, row.toJSON()); writeErr != nil {
-					return &ExitError{Code: 2, Err: writeErr}
-				}
-				return &ExitError{Code: 1}
-			}
-			fmt.Fprintf(out, "key:        %s\nstate:      no marker\n", c.key)
-			return &ExitError{Code: 1}
-		}
-		return &ExitError{Code: 2, Err: loadErr}
-	}
-
-	// ownDigestDiff is true when the marker's own-scope digest disagrees
-	// with the current state. Deps-only gates (no own scope) skip the
-	// computation entirely: their freshness is purely a function of
-	// children (see evaluate()).
-	hashTypeChanged := false
-	ownDigestDiff := false
-	if c.gate.HasOwnScope() {
-		digest, hashErr := c.hasher.Hash(c.repo)
-		if hashErr != nil {
-			return &ExitError{Code: 2, Err: hashErr}
-		}
-		hashTypeChanged = m.HashType != c.hasher.Type()
-		ownDigestDiff = m.Digest != digest
-	}
-
 	res, evalErr := c.evaluate()
 	if evalErr != nil {
 		return &ExitError{Code: 2, Err: evalErr}
 	}
 
+	if res.marker == nil {
+		// No marker on disk — evaluate already mapped this to
+		// reason="no marker"; honor explain/json variants.
+		if explain != nil && explain.enabled {
+			if emitErr := emitExplain(c, explain, out, errOut, stateNoMarker); emitErr != nil {
+				return &ExitError{Code: 2, Err: emitErr}
+			}
+			if explain.json {
+				return &ExitError{Code: 1}
+			}
+			fmt.Fprintf(out, "key:        %s\nstate:      no marker\n", c.key)
+			return &ExitError{Code: 1}
+		}
+		if jsonOnly {
+			row := statusRow{
+				key:          c.key,
+				state:        stateNoMarker,
+				configured:   true,
+				unconfigured: false,
+				note:         noteConfigured,
+			}
+			if writeErr := writeJSON(out, row.toJSON()); writeErr != nil {
+				return &ExitError{Code: 2, Err: writeErr}
+			}
+			return &ExitError{Code: 1}
+		}
+		fmt.Fprintf(out, "key:        %s\nstate:      no marker\n", c.key)
+		return &ExitError{Code: 1}
+	}
+
+	m := res.marker
 	label := stateMatch
-	if !res.matched || hashTypeChanged || ownDigestDiff {
+	if !res.matched {
 		label = stateMismatch
 	}
 
@@ -183,7 +167,7 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 			unconfigured: false,
 		}
 		switch {
-		case hashTypeChanged, ownDigestDiff:
+		case res.hashTypeChanged, res.ownDigestDiff:
 			row.state = stateMismatch
 			row.note = noteDigestDiff
 		case !res.matched:
@@ -221,10 +205,10 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 	}
 
 	switch {
-	case hashTypeChanged:
+	case res.hashTypeChanged:
 		fmt.Fprintf(out, "state:      mismatch (hash type changed: %s -> %s)\n", m.HashType, c.hasher.Type())
 		return &ExitError{Code: 1}
-	case ownDigestDiff:
+	case res.ownDigestDiff:
 		fmt.Fprintln(out, "state:      mismatch (digest differs)")
 		return &ExitError{Code: 1}
 	case !res.matched:
