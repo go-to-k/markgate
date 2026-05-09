@@ -1,5 +1,8 @@
 # Changelog
 
+## [v0.3.2](https://github.com/go-to-k/markgate/compare/v0.3.1...v0.3.2) - 2026-05-09
+- fix: address three bug reports from cdkd against v0.3.1 by @go-to-k in https://github.com/go-to-k/markgate/pull/44
+
 ## [v0.3.1](https://github.com/go-to-k/markgate/compare/v0.3.0...v0.3.1) - 2026-05-09
 - chore: add e2e CLI smoke + pre-merge hook + verify-e2e skill by @go-to-k in https://github.com/go-to-k/markgate/pull/36
 - chore: post-batch follow-ups (drop LoadStrict, surface glob errors, README notes) by @go-to-k in https://github.com/go-to-k/markgate/pull/38
