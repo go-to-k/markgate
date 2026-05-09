@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.3.1](https://github.com/go-to-k/markgate/compare/v0.3.0...v0.3.1) - 2026-05-09
+- chore: add e2e CLI smoke + pre-merge hook + verify-e2e skill by @go-to-k in https://github.com/go-to-k/markgate/pull/36
+- chore: post-batch follow-ups (drop LoadStrict, surface glob errors, README notes) by @go-to-k in https://github.com/go-to-k/markgate/pull/38
+- refactor(cli): dedupe resolveStateDir / resolveMarkerPath by @go-to-k in https://github.com/go-to-k/markgate/pull/39
+- refactor(cli): single state.Load + hasher.Hash per status invocation by @go-to-k in https://github.com/go-to-k/markgate/pull/40
+- refactor(state): replace hash_type 'deps-only' sentinel with Marker.Kind by @go-to-k in https://github.com/go-to-k/markgate/pull/41
+- fix(cli): TTL propagation through composes/requires chain by @go-to-k in https://github.com/go-to-k/markgate/pull/42
+- docs: split README into core gates vs advanced configuration by @go-to-k in https://github.com/go-to-k/markgate/pull/43
+
 ## [v0.3.0](https://github.com/go-to-k/markgate/compare/v0.2.0...v0.3.0) - 2026-05-09
 - docs: restructure README for clarity and flow by @go-to-k in https://github.com/go-to-k/markgate/pull/10
 - chore: block git commit/push on main via PreToolUse hook by @go-to-k in https://github.com/go-to-k/markgate/pull/13
