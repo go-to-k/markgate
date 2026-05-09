@@ -10,9 +10,10 @@ import (
 
 func newClearCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "clear [key]",
-		Short: "Remove the marker (idempotent)",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "clear [key]",
+		Short:             "Remove the marker (idempotent)",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: gateKeyCompletion,
 	}
 	overrides := addGateFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {

@@ -10,9 +10,10 @@ import (
 
 func newVerifyCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "verify [key]",
-		Short: "Check current state against the marker (exit 0 match, 1 mismatch, 2 error)",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "verify [key]",
+		Short:             "Check current state against the marker (exit 0 match, 1 mismatch, 2 error)",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: gateKeyCompletion,
 	}
 	overrides := addGateFlags(cmd)
 	cmd.RunE = func(_ *cobra.Command, args []string) error {

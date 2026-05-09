@@ -12,9 +12,10 @@ import (
 
 func newStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "status [key]",
-		Short: "Show marker information and freshness",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "status [key]",
+		Short:             "Show marker information and freshness",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: gateKeyCompletion,
 	}
 	overrides := addGateFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
