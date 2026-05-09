@@ -1,5 +1,24 @@
 # Changelog
 
+## [v0.3.0](https://github.com/go-to-k/markgate/compare/v0.2.0...v0.3.0) - 2026-05-09
+- docs: restructure README for clarity and flow by @go-to-k in https://github.com/go-to-k/markgate/pull/10
+- chore: block git commit/push on main via PreToolUse hook by @go-to-k in https://github.com/go-to-k/markgate/pull/13
+- docs: clarify run shape covers all invocation sites by @go-to-k in https://github.com/go-to-k/markgate/pull/12
+- docs: cover 'edit after set' case in Two shapes bullets by @go-to-k in https://github.com/go-to-k/markgate/pull/14
+- docs: add multi-gate pre-commit use case with overlapping scope by @go-to-k in https://github.com/go-to-k/markgate/pull/15
+- docs: fix pre-commit framework config filename by @go-to-k in https://github.com/go-to-k/markgate/pull/16
+- docs: add mise install method by @go-to-k in https://github.com/go-to-k/markgate/pull/17
+- docs: restructure README to follow blog narrative flow by @go-to-k in https://github.com/go-to-k/markgate/pull/18
+- docs: refresh README images by @go-to-k in https://github.com/go-to-k/markgate/pull/19
+- docs: drop redundant 'run' from pnpm examples by @go-to-k in https://github.com/go-to-k/markgate/pull/20
+- docs: add use case for AI-judgment checks (non-scriptable reviews) by @go-to-k in https://github.com/go-to-k/markgate/pull/21
+- feat: shell completion for bash / zsh / fish / powershell by @go-to-k in https://github.com/go-to-k/markgate/pull/30
+- feat: markgate config lint by @go-to-k in https://github.com/go-to-k/markgate/pull/32
+- feat: TTL on markers by @go-to-k in https://github.com/go-to-k/markgate/pull/34
+- feat: --explain on verify, status, run by @go-to-k in https://github.com/go-to-k/markgate/pull/31
+- feat: bare 'status' lists all gates with freshness by @go-to-k in https://github.com/go-to-k/markgate/pull/33
+- feat: gate dependencies (composes / requires) by @go-to-k in https://github.com/go-to-k/markgate/pull/35
+
 ## [v0.2.0](https://github.com/go-to-k/markgate/compare/v0.1.0...v0.2.0) - 2026-04-23
 - docs: restructure README for clearer flow by @go-to-k in https://github.com/go-to-k/markgate/pull/4
 - docs: Update README.md by @go-to-k in https://github.com/go-to-k/markgate/pull/6
