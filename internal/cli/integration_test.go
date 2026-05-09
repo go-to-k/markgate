@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -739,6 +740,253 @@ func TestConfigLint_JSONCleanIsEmptyArray(t *testing.T) {
 	}
 	if len(findings) != 0 {
 		t.Errorf("clean json findings = %d, want 0", len(findings))
+	}
+}
+
+func TestStatus_Default_BackwardsCompat(t *testing.T) {
+	dir := initRepo(t)
+	if code, _ := runCmd(t, "set", "default"); code != 0 {
+		t.Fatalf("set default: %d", code)
+	}
+	code, out := runCmd(t, "status", "default")
+	if code != 0 {
+		t.Errorf("status default after set: code = %d, want 0", code)
+	}
+	if !strings.Contains(out, "state:      match") {
+		t.Errorf("missing match line:\n%s", out)
+	}
+
+	writeRepoFile(t, dir, "seed.txt", "edit")
+	code, out = runCmd(t, "status", "default")
+	if code != 1 {
+		t.Errorf("status default after edit: code = %d, want 1", code)
+	}
+	if !strings.Contains(out, "mismatch") {
+		t.Errorf("missing mismatch line:\n%s", out)
+	}
+}
+
+func TestStatusBareAll_None(t *testing.T) {
+	initRepo(t)
+	code, out := runCmd(t, "status")
+	if code != 0 {
+		t.Errorf("bare status with no gates: code = %d, want 0", code)
+	}
+	if !strings.Contains(out, "KEY") || !strings.Contains(out, "STATE") {
+		t.Errorf("expected header row, got:\n%s", out)
+	}
+	// No data rows — only the header line.
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 1 {
+		t.Errorf("expected only header, got %d lines:\n%s", len(lines), out)
+	}
+}
+
+func TestStatusBareAll_ConfigOnly(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  alpha:\n    hash: git-tree\n  beta:\n    hash: git-tree\n")
+
+	code, out := runCmd(t, "status")
+	if code != 1 {
+		t.Errorf("config-only bare status: code = %d, want 1 (no markers)", code)
+	}
+	for _, want := range []string{"alpha", "beta", "no marker", "(configured)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output:\n%s", want, out)
+		}
+	}
+}
+
+func TestStatusBareAll_MarkerOnly(t *testing.T) {
+	initRepo(t)
+	if code, _ := runCmd(t, "set", "stray"); code != 0 {
+		t.Fatalf("set stray: %d", code)
+	}
+	code, out := runCmd(t, "status")
+	if code != 0 {
+		t.Errorf("marker-only bare status: code = %d, want 0", code)
+	}
+	if !strings.Contains(out, "stray") {
+		t.Errorf("missing stray row:\n%s", out)
+	}
+	if !strings.Contains(out, "(unconfigured)") {
+		t.Errorf("expected (unconfigured) note for marker-only row:\n%s", out)
+	}
+}
+
+func TestStatusBareAll_Both(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  configured-only:\n    hash: git-tree\n  match-me:\n    hash: git-tree\n")
+	if code, _ := runCmd(t, "set", "match-me"); code != 0 {
+		t.Fatalf("set match-me: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "stray"); code != 0 {
+		t.Fatalf("set stray: %d", code)
+	}
+
+	code, out := runCmd(t, "status")
+	if code != 1 {
+		// configured-only has no marker, so the run should fail.
+		t.Errorf("mixed bare status: code = %d, want 1", code)
+	}
+	// Sorted alphabetically: configured-only, match-me, stray.
+	idxCO := strings.Index(out, "configured-only")
+	idxMM := strings.Index(out, "match-me")
+	idxSt := strings.Index(out, "stray")
+	if idxCO < 0 || idxMM < 0 || idxSt < 0 {
+		t.Fatalf("missing rows:\n%s", out)
+	}
+	if idxCO >= idxMM || idxMM >= idxSt {
+		t.Errorf("rows not sorted alphabetically:\n%s", out)
+	}
+	if !strings.Contains(out, "(configured)") {
+		t.Errorf("expected (configured) note for configured-only:\n%s", out)
+	}
+	if !strings.Contains(out, "(unconfigured)") {
+		t.Errorf("expected (unconfigured) note for stray:\n%s", out)
+	}
+}
+
+func TestStatusBareAll_MismatchExits1(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  check:\n    hash: git-tree\n")
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	writeRepoFile(t, dir, "seed.txt", "edited")
+
+	code, out := runCmd(t, "status")
+	if code != 1 {
+		t.Errorf("mismatch bare status: code = %d, want 1", code)
+	}
+	if !strings.Contains(out, "mismatch") {
+		t.Errorf("missing mismatch row:\n%s", out)
+	}
+	if !strings.Contains(out, "digest differs") {
+		t.Errorf("expected 'digest differs' note:\n%s", out)
+	}
+}
+
+func TestStatusBareAll_AllMatchExits0(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  one:\n    hash: git-tree\n  two:\n    hash: git-tree\n")
+	if code, _ := runCmd(t, "set", "one"); code != 0 {
+		t.Fatalf("set one: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "two"); code != 0 {
+		t.Fatalf("set two: %d", code)
+	}
+
+	code, out := runCmd(t, "status")
+	if code != 0 {
+		t.Errorf("all-match bare status: code = %d, want 0", code)
+	}
+	if strings.Contains(out, "(configured)") || strings.Contains(out, "(unconfigured)") {
+		t.Errorf("matched-and-configured rows should have no note:\n%s", out)
+	}
+}
+
+func TestStatusBareAll_JSON(t *testing.T) {
+	repoDir := initRepo(t)
+	writeRepoFile(t, repoDir, ".markgate.yml",
+		"gates:\n  configured-only:\n    hash: git-tree\n  matched:\n    hash: git-tree\n")
+	if code, _ := runCmd(t, "set", "matched"); code != 0 {
+		t.Fatalf("set matched: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "stray"); code != 0 {
+		t.Fatalf("set stray: %d", code)
+	}
+
+	code, out := runCmd(t, "status", "--json")
+	if code != 1 {
+		t.Errorf("json bare status: code = %d, want 1", code)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d:\n%s", len(rows), out)
+	}
+	wantOrder := []string{"configured-only", "matched", "stray"}
+	for i, w := range wantOrder {
+		if got, _ := rows[i]["key"].(string); got != w {
+			t.Errorf("row %d key = %q, want %q", i, got, w)
+		}
+	}
+	// configured-only: no marker, configured=true, unconfigured=false.
+	if rows[0]["state"] != "no marker" || rows[0]["note"] != "(configured)" ||
+		rows[0]["configured"] != true || rows[0]["unconfigured"] != false ||
+		rows[0]["marker"] != nil {
+		t.Errorf("configured-only row malformed: %#v", rows[0])
+	}
+	// matched: state=match, note empty, marker populated.
+	if rows[1]["state"] != "match" || rows[1]["note"] != "" {
+		t.Errorf("matched row malformed: %#v", rows[1])
+	}
+	if marker, ok := rows[1]["marker"].(map[string]any); !ok {
+		t.Errorf("matched row missing marker object: %#v", rows[1])
+	} else {
+		if marker["hash_type"] != "git-tree" {
+			t.Errorf("matched marker hash_type = %v, want git-tree", marker["hash_type"])
+		}
+		if _, ok := marker["created_at"].(string); !ok {
+			t.Errorf("matched marker missing created_at: %#v", marker)
+		}
+	}
+	// stray: marker present, configured=false, unconfigured=true.
+	if rows[2]["configured"] != false || rows[2]["unconfigured"] != true ||
+		rows[2]["note"] != "(unconfigured)" {
+		t.Errorf("stray row malformed: %#v", rows[2])
+	}
+}
+
+func TestStatus_SingleKeyJSON(t *testing.T) {
+	initRepo(t)
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	code, out := runCmd(t, "status", "check", "--json")
+	if code != 0 {
+		t.Errorf("single-key json: code = %d, want 0", code)
+	}
+	var row map[string]any
+	if err := json.Unmarshal([]byte(out), &row); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if row["key"] != "check" || row["state"] != "match" {
+		t.Errorf("malformed row: %#v", row)
+	}
+	if marker, ok := row["marker"].(map[string]any); !ok {
+		t.Errorf("missing marker object: %#v", row)
+	} else if marker["hash_type"] != "git-tree" {
+		t.Errorf("marker hash_type = %v, want git-tree", marker["hash_type"])
+	}
+}
+
+func TestStatusBareAll_StateDirOverride(t *testing.T) {
+	initRepo(t)
+	stateDir := t.TempDir()
+
+	if code, _ := runCmd(t, "set", "first", "--state-dir", stateDir); code != 0 {
+		t.Fatalf("set first: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "second", "--state-dir", stateDir); code != 0 {
+		t.Fatalf("set second: %d", code)
+	}
+
+	code, out := runCmd(t, "status", "--state-dir", stateDir)
+	if code != 0 {
+		t.Errorf("bare status with --state-dir: code = %d, want 0", code)
+	}
+	for _, want := range []string{"first", "second"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q row:\n%s", want, out)
+		}
 	}
 }
 

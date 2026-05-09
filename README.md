@@ -636,7 +636,8 @@ naturally:
 markgate set        [key]              Record the current state hash.
 markgate verify     [key]              Exit 0 match, 1 mismatch (incl. ttl
                                        expiry), 2 error.
-markgate status     [key]              Show marker + match status.
+markgate status     [key]              Show marker + match status (bare:
+                                       list every known gate).
 markgate clear      [key]              Delete the marker (idempotent).
 markgate run        [key] -- <cmd>...  Sugar for verify + <cmd> + set.
 markgate init                          Write a starter .markgate.yml.
@@ -652,6 +653,45 @@ markgate completion <shell>            Emit a completion script (bash / zsh / fi
 `verify`, `status`, and `run` accept `--explain` / `-e` to print the
 files currently in scope to stderr (with `--json` for a structured
 form on stdout). See [Debugging a stale gate](#debugging-a-stale-gate).
+
+### `markgate status` (bare): list all gates
+
+Without a `[key]`, `markgate status` prints one row per known gate —
+the union of `gates:` keys in `.markgate.yml` and marker files in the
+state directory:
+
+```text
+$ markgate status
+KEY            STATE        AGE        NOTE
+check          match        3m ago     -
+docs           mismatch     1h ago     digest differs
+integ-destroy  match        2d ago     -
+verify-pr      no marker    -          (configured)
+extra-gate     match        5m ago     (unconfigured)
+```
+
+Notes:
+
+- `(configured)` — gate is in `.markgate.yml` but no marker exists
+  yet (run the check or `markgate set <key>`).
+- `(unconfigured)` — a marker file is present but the gate isn't in
+  `.markgate.yml` (stale from a renamed / deleted gate, or written
+  by a script that bypassed the config).
+
+Exit code: `0` if every row matches, `1` if any row is mismatched or
+missing a marker, `2` on internal error.
+
+`--json` emits a machine-readable array (one object per row) using
+the same `state` / `note` vocabulary as the table; `markgate status
+<key> --json` emits a single object with the same shape.
+
+> **Behavior change in v0.x:** `markgate status` (no key) used to
+> operate on the `default` key. It now lists every gate. Use
+> `markgate status default` to keep the old single-key behavior.
+> `status` deviates from `set` / `verify` / `clear`'s "no-arg =
+> default key" rule on purpose: it's an introspection command (think
+> `git status`), so the bare form is the overview, not a shortcut to
+> one specific gate.
 
 ### Per-invocation overrides
 
@@ -760,6 +800,11 @@ The marker is written at `<dir>/<key>.json` (no extra `markgate/`
 subdirectory). Relative paths resolve against the repo top-level, so
 the location is stable regardless of cwd — identical on every machine
 that checks out the repo.
+
+[Bare `markgate status`](#markgate-status-bare-list-all-gates) honors
+the same precedence: it walks `<dir>/` (with the override applied)
+and lists every `<key>.json` it finds, alongside the `gates:` keys
+in `.markgate.yml`.
 
 ### Two patterns at a glance
 
