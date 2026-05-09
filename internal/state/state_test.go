@@ -52,6 +52,48 @@ func TestLoad_SchemaVersionMismatch(t *testing.T) {
 	}
 }
 
+func TestLoad_MigratesV1HashMarker(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "v1.json")
+	body := []byte(`{"version":1,"hash_type":"files","digest":"deadbeef","created_at":"2026-01-01T00:00:00Z"}`)
+	if err := os.WriteFile(p, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("v1 marker should migrate, got err: %v", err)
+	}
+	if got.Version != SchemaVersion {
+		t.Errorf("Version = %d, want %d (migrated)", got.Version, SchemaVersion)
+	}
+	if got.HashType != "files" || got.Digest != "deadbeef" {
+		t.Errorf("digest fields lost on migration: %+v", got)
+	}
+	if got.Kind != KindHash {
+		t.Errorf("Kind = %q, want %q (hash markers stay KindHash)", got.Kind, KindHash)
+	}
+}
+
+func TestLoad_MigratesV1DepsOnlySentinel(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "v1deps.json")
+	body := []byte(`{"version":1,"hash_type":"deps-only","digest":"","created_at":"2026-01-01T00:00:00Z"}`)
+	if err := os.WriteFile(p, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("v1 deps-only marker should migrate, got err: %v", err)
+	}
+	if got.Version != SchemaVersion {
+		t.Errorf("Version = %d, want %d", got.Version, SchemaVersion)
+	}
+	if got.Kind != KindDepsOnly {
+		t.Errorf("Kind = %q, want %q (deps-only sentinel must promote)", got.Kind, KindDepsOnly)
+	}
+	if got.HashType != "" || got.Digest != "" {
+		t.Errorf("HashType / Digest must be cleared on deps-only migration, got %+v", got)
+	}
+}
+
 func TestLoad_CorruptJSON(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "bad.json")
 	if err := os.WriteFile(p, []byte("not json"), 0o600); err != nil {

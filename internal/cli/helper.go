@@ -132,6 +132,24 @@ func newGateCtx(k string, overrides *gateFlagValues) (*gateCtx, error) {
 	}, nil
 }
 
+// newGateCtxWithConfig builds a gateCtx from already-resolved
+// components, skipping the config / git / hasher I/O newGateCtx does.
+// Used by callers that walk multiple keys (bare `status`) to avoid
+// re-loading .markgate.yml per row. The caller is responsible for
+// applying overrides and validating the gate before calling.
+func newGateCtxWithConfig(k string, gate config.Gate, h hasher.Hasher, repo *gitutil.Repo, top, gitDir, markerPath string, cfg *config.Config) *gateCtx {
+	return &gateCtx{
+		key:        k,
+		repo:       repo,
+		topLevel:   top,
+		gitDir:     gitDir,
+		gate:       gate,
+		hasher:     h,
+		markerPath: markerPath,
+		cfg:        cfg,
+	}
+}
+
 // child builds a gateCtx for a child gate referenced via composes/requires.
 // Per-invocation overrides do NOT propagate to children — each child is
 // resolved purely from .markgate.yml so its scope is what its own entry

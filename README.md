@@ -766,6 +766,10 @@ Notes:
 - `(unconfigured)` — a marker file is present but the gate isn't in
   `.markgate.yml` (stale from a renamed / deleted gate, or written
   by a script that bypassed the config).
+- `child <key> is stale` — this gate `composes` / `requires` the
+  named child, and the child's own row is mismatch. The bare list
+  recurses through dependencies, so the parent's verdict here always
+  agrees with `markgate verify <parent>`.
 
 Exit code: `0` if every row matches, `1` if any row is mismatched or
 missing a marker, `2` on internal error.

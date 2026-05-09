@@ -25,9 +25,17 @@ var ErrNotFound = errors.New("marker not found")
 // v1 wrote a sentinel `hash_type: "deps-only"` for gates without their
 // own scope; v2 splits that out into a dedicated `kind` field so
 // hash_type stays semantically clean (the actual hashing algorithm).
-// state.Load treats wrong-version markers as ErrNotFound, so old v1
-// markers are silently re-generated on first verify after upgrade.
+// state.Load auto-migrates v1 markers in memory so a 0.3.0 → 0.3.1
+// upgrade does not invalidate every existing marker. The on-disk
+// file is rewritten as v2 only on the next Save (typically the next
+// `set` after a real digest change). Wrong-version markers from any
+// schema we don't know how to migrate are surfaced as ErrNotFound.
 const SchemaVersion = 2
+
+// legacyKindHashTypeDepsOnly is the v1 sentinel that the deps-only
+// kind used to live under (`hash_type: "deps-only"`). Kept here so the
+// migration in Load() has a named reference rather than a magic string.
+const legacyKindHashTypeDepsOnly = "deps-only"
 
 // Marker kinds. KindHash (the empty string default) is a normal
 // hash-and-digest marker. KindDepsOnly records that an explicit `set`
@@ -79,13 +87,32 @@ func Load(path string) (*Marker, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse marker %s: %w", path, err)
 	}
-	// Forward-compat: a marker written by a different schema version is
-	// treated as absent so the caller re-runs and rewrites with the
-	// current schema. Prevents cross-version digest comparisons.
-	if m.Version != SchemaVersion {
+	switch m.Version {
+	case SchemaVersion:
+		return &m, nil
+	case 1:
+		migrateV1(&m)
+		return &m, nil
+	default:
+		// Unknown / future schema: treat as absent so the caller re-runs
+		// and rewrites with the current schema. Prevents cross-version
+		// digest comparisons.
 		return nil, ErrNotFound
 	}
-	return &m, nil
+}
+
+// migrateV1 promotes an in-memory v1 marker to the current schema. The
+// only v1→v2 difference is the `hash_type: "deps-only"` sentinel,
+// which moves into the dedicated Kind field; everything else (digest,
+// head, created_at) is byte-identical. The Version is updated so the
+// next Save writes back as v2. Pure mutation, no I/O.
+func migrateV1(m *Marker) {
+	if m.HashType == legacyKindHashTypeDepsOnly {
+		m.Kind = KindDepsOnly
+		m.HashType = ""
+		m.Digest = ""
+	}
+	m.Version = SchemaVersion
 }
 
 // Save writes a marker atomically: CreateTemp in the destination directory,

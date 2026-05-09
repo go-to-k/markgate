@@ -1587,3 +1587,141 @@ func TestExplain_RunJSONOnSkip(t *testing.T) {
 		t.Errorf("state = %q, want match", doc.State)
 	}
 }
+
+// TestVerify_ReadsLegacyV1Marker covers the cdkd bug report: a v1
+// marker written by 0.3.0 must not be silently treated as missing by
+// 0.3.1+. Load auto-migrates the schema; verify should report match
+// without anyone touching the on-disk file.
+func TestVerify_ReadsLegacyV1Marker(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "x")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  check:\n    hash: files\n    include: [\"src/**\"]\n")
+
+	// Pin the digest the way 0.3.0 would have written it: we let 0.3.1
+	// `set` write a marker, then rewrite the file in v1 shape using
+	// the same digest. This isolates the schema-version test from the
+	// hash algorithm itself.
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: %d", code)
+	}
+	markerPath := filepath.Join(dir, ".git", "markgate", "check.json")
+	current, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("read v2 marker: %v", err)
+	}
+	var v2 struct {
+		HashType  string `json:"hash_type"`
+		Digest    string `json:"digest"`
+		CreatedAt string `json:"created_at"`
+	}
+	if err := json.Unmarshal(current, &v2); err != nil {
+		t.Fatalf("parse v2: %v", err)
+	}
+	v1 := []byte(`{"version":1,"hash_type":"` + v2.HashType +
+		`","digest":"` + v2.Digest +
+		`","created_at":"` + v2.CreatedAt + `"}`)
+	if err := os.WriteFile(markerPath, v1, 0o600); err != nil {
+		t.Fatalf("downgrade marker: %v", err)
+	}
+
+	if code, _ := runCmd(t, "verify", "check"); code != 0 {
+		t.Errorf("verify against v1 marker: code = %d, want 0", code)
+	}
+	if code, out := runCmd(t, "status", "check"); code != 0 {
+		t.Errorf("status against v1 marker: code = %d, out:\n%s", code, out)
+	}
+}
+
+// TestConfigLint_KnowsAllGateFields covers the cdkd report that lint
+// flagged ttl / composes / requires as unknown fields. The allowlist is
+// derived from config.Gate via reflection so any field the parser
+// accepts is recognized as known.
+func TestConfigLint_KnowsAllGateFields(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "foo.txt", "x")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n"+
+			"  parent:\n"+
+			"    requires: [child]\n"+
+			"  child:\n"+
+			"    hash: files\n"+
+			"    include: [\"*.txt\"]\n"+
+			"    ttl: 14d\n"+
+			"  alt:\n"+
+			"    composes: [child]\n")
+
+	code, out := runCmd(t, "config", "lint")
+	if code != 0 {
+		t.Errorf("config lint: code = %d, want 0; output:\n%s", code, out)
+	}
+	for _, field := range []string{"ttl", "requires", "composes"} {
+		if strings.Contains(out, "unknown field: gates."+field) ||
+			strings.Contains(out, "."+field+":") && strings.Contains(out, "unknown field") {
+			t.Errorf("lint reported %q as unknown:\n%s", field, out)
+		}
+	}
+}
+
+// TestStatus_BareRecursesThroughRequires covers the cdkd report:
+// single-key status correctly recurses through requires/composes,
+// but bare `status` (list form) used to skip the recursion and showed
+// the parent as match while the child was stale. The two views must
+// agree.
+func TestStatus_BareRecursesThroughRequires(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "foo.txt", "x")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n"+
+			"  parent:\n"+
+			"    requires: [child]\n"+
+			"  child:\n"+
+			"    hash: files\n"+
+			"    include: [\"*.txt\"]\n")
+
+	if code, _ := runCmd(t, "set", "child"); code != 0 {
+		t.Fatalf("set child: %d", code)
+	}
+	if code, _ := runCmd(t, "set", "parent"); code != 0 {
+		t.Fatalf("set parent: %d", code)
+	}
+
+	// Single-key form: parent must already see the freshness picture.
+	if code, single := runCmd(t, "status", "parent"); code != 0 {
+		t.Errorf("status parent (after both set): code=%d\n%s", code, single)
+	}
+
+	if code, _ := runCmd(t, "clear", "child"); code != 0 {
+		t.Fatalf("clear child: %d", code)
+	}
+
+	codeSingle, single := runCmd(t, "status", "parent")
+	if codeSingle != 1 {
+		t.Errorf("single-key status: code=%d, want 1\n%s", codeSingle, single)
+	}
+	if !strings.Contains(single, "child child is stale") {
+		t.Errorf("single-key status missing child-stale note:\n%s", single)
+	}
+
+	codeBare, bare := runCmd(t, "status")
+	if codeBare != 1 {
+		t.Errorf("bare status: code=%d, want 1 (parent must propagate)\n%s", codeBare, bare)
+	}
+	// Find the parent row. With tabwriter, columns are space-padded.
+	var parentLine string
+	for _, line := range strings.Split(bare, "\n") {
+		if strings.HasPrefix(line, "parent ") {
+			parentLine = line
+			break
+		}
+	}
+	if parentLine == "" {
+		t.Fatalf("parent row missing from bare status:\n%s", bare)
+	}
+	if !strings.Contains(parentLine, "mismatch") {
+		t.Errorf("parent row state should be mismatch, got: %q", parentLine)
+	}
+	if !strings.Contains(parentLine, "child child is stale") {
+		t.Errorf("parent row note should mention stale child, got: %q", parentLine)
+	}
+}
