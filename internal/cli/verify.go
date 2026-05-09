@@ -1,12 +1,9 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
-
-	"github.com/go-to-k/markgate/internal/state"
 )
 
 func newVerifyCmd() *cobra.Command {
@@ -17,33 +14,38 @@ func newVerifyCmd() *cobra.Command {
 		ValidArgsFunction: gateKeyCompletion,
 	}
 	overrides := addGateFlags(cmd)
+	explain := addExplainFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if err := explain.validate(); err != nil {
+			return &ExitError{Code: 2, Err: err}
+		}
 		c, err := newGateCtx(resolveKey(args), overrides)
 		if err != nil {
 			return err
 		}
-		m, err := state.Load(c.markerPath)
+		label, matched, m, err := explainStateForVerify(c)
 		if err != nil {
-			if errors.Is(err, state.ErrNotFound) {
+			return &ExitError{Code: 2, Err: err}
+		}
+		if matched {
+			ttl, ttlErr := checkTTL(c.gate, m)
+			if ttlErr != nil {
+				return &ExitError{Code: 2, Err: ttlErr}
+			}
+			if ttl.expired {
+				if emitErr := emitExplain(c, explain, cmd.OutOrStdout(), cmd.ErrOrStderr(), stateMismatch); emitErr != nil {
+					return &ExitError{Code: 2, Err: emitErr}
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"markgate: state mismatch (expired by ttl: %s, marker is %s old)\n",
+					c.gate.TTL, formatAge(ttl.age))
 				return &ExitError{Code: 1}
 			}
-			return &ExitError{Code: 2, Err: err}
 		}
-		digest, err := c.hasher.Hash(c.repo)
-		if err != nil {
-			return &ExitError{Code: 2, Err: err}
+		if emitErr := emitExplain(c, explain, cmd.OutOrStdout(), cmd.ErrOrStderr(), label); emitErr != nil {
+			return &ExitError{Code: 2, Err: emitErr}
 		}
-		if m.HashType != c.hasher.Type() || m.Digest != digest {
-			return &ExitError{Code: 1}
-		}
-		ttl, err := checkTTL(c.gate, m)
-		if err != nil {
-			return &ExitError{Code: 2, Err: err}
-		}
-		if ttl.expired {
-			fmt.Fprintf(cmd.ErrOrStderr(),
-				"markgate: state mismatch (expired by ttl: %s, marker is %s old)\n",
-				c.gate.TTL, formatAge(ttl.age))
+		if !matched {
 			return &ExitError{Code: 1}
 		}
 		return nil

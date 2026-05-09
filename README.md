@@ -649,6 +649,10 @@ markgate version                       Print the version.
 markgate completion <shell>            Emit a completion script (bash / zsh / fish / powershell).
 ```
 
+`verify`, `status`, and `run` accept `--explain` / `-e` to print the
+files currently in scope to stderr (with `--json` for a structured
+form on stdout). See [Debugging a stale gate](#debugging-a-stale-gate).
+
 ### Per-invocation overrides
 
 `set` / `verify` / `status` / `clear` / `run` each accept these flags,
@@ -664,12 +668,60 @@ so one-off scopes don't need a `.markgate.yml`:
                          <git-dir>/markgate. See "Sharing markers".
 ```
 
+`verify` / `status` / `run` additionally accept a debug flag:
+
+```text
+--explain, -e            Print the in-scope file list to stderr ahead
+                         of normal output. Does NOT change exit codes.
+                         See "Debugging a stale gate" below.
+--json                   With --explain: emit a single JSON object on
+                         stdout instead of the text scope listing.
+                         (--json without --explain is an error.)
+```
+
 Flag syntax is identical across hash types. With `--hash files`,
 `--include` is required. Example — exclude `vendor/` without any
 config file:
 
 ```sh
 markgate run --exclude 'vendor/**' -- pnpm build
+```
+
+#### Debugging a stale gate
+
+`--explain` lists the files **currently in scope** for the active
+hasher (`git-tree` or `files`) after `--include` / `--exclude`
+filtering. It is **not** a diff against the marker — markgate stores
+only a single SHA-256, so "files that changed since `set`" cannot be
+reconstructed post-hoc. What you see is the candidate set the hasher
+would fold into the digest right now; if the wrong files appear (or
+expected ones are missing), your globs are misconfigured.
+
+```sh
+$ markgate verify check -e
+scope:
+  go.mod
+  internal/cli/helper.go
+  internal/cli/status.go
+  internal/state/state.go
+state: mismatch
+```
+
+The state line uses one of `match`, `mismatch`, `no marker` — the
+same vocabulary as the JSON form below. The exit code is unchanged
+(0 / 1 / 2), so `--explain` is safe to leave on inside a hook while
+debugging.
+
+`--explain --json` emits a single object on stdout instead, suitable
+for piping into `jq`:
+
+```json
+{
+  "key": "check",
+  "scope": ["go.mod", "internal/cli/helper.go"],
+  "hasher": "git-tree",
+  "state": "mismatch"
+}
 ```
 
 ### Environment variables
@@ -910,6 +962,14 @@ markers where commit-access already implies trust in the signal.
   (28-31 days) and would make `now - created_at > 1mo` non-deterministic.
   Use `30d` or `4w` to be explicit. Same reasoning rules out `1y`.
   (See [Wall-clock expiry](#wall-clock-expiry-ttl).)
+- **My gate keeps re-running. How do I debug it?** Run `markgate
+  verify <key> --explain` (or `-e`). It lists the files currently in
+  scope on stderr, so you can see whether your `include` /
+  `exclude` globs match what you expect. Note: this is the
+  *current* scope, not a diff against the marker — markgate stores a
+  single hash, so "which files changed since `set`" can't be
+  reconstructed. See
+  [Debugging a stale gate](#debugging-a-stale-gate).
 
 ## License
 
