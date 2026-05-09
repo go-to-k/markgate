@@ -85,6 +85,33 @@ go install github.com/go-to-k/markgate/cmd/markgate@latest
 Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
 [GitHub Releases](https://github.com/go-to-k/markgate/releases).
 
+### Shell completion
+
+`markgate completion <shell>` prints a completion script for `bash`,
+`zsh`, `fish`, or `powershell`. Pipe it into the location your shell
+loads.
+
+```sh
+# Bash (current session)
+source <(markgate completion bash)
+# Bash (persistent)
+markgate completion bash > /etc/bash_completion.d/markgate
+
+# Zsh — write into a directory on $fpath, e.g.
+markgate completion zsh > "${fpath[1]}/_markgate"
+
+# Fish
+markgate completion fish > ~/.config/fish/completions/markgate.fish
+
+# PowerShell
+markgate completion powershell | Out-String | Invoke-Expression
+```
+
+Once installed, the gate-key positions on `set` / `verify` / `status` /
+`clear` / `run` complete from the `gates:` map in `.markgate.yml` at
+the repo top-level. With no `.markgate.yml` present, completion stays
+silent — it never scans the marker directory or runs the gate.
+
 ## Basic setup
 
 The simplest shape: prefix the check command with `markgate run --`
@@ -563,13 +590,14 @@ naturally:
 ## CLI reference
 
 ```text
-markgate set    [key]              Record the current state hash.
-markgate verify [key]              Exit 0 match, 1 mismatch, 2 error.
-markgate status [key]              Show marker + match status.
-markgate clear  [key]              Delete the marker (idempotent).
-markgate run    [key] -- <cmd>...  Sugar for verify + <cmd> + set.
-markgate init                      Write a starter .markgate.yml.
-markgate version                   Print the version.
+markgate set        [key]              Record the current state hash.
+markgate verify     [key]              Exit 0 match, 1 mismatch, 2 error.
+markgate status     [key]              Show marker + match status.
+markgate clear      [key]              Delete the marker (idempotent).
+markgate run        [key] -- <cmd>...  Sugar for verify + <cmd> + set.
+markgate init                          Write a starter .markgate.yml.
+markgate version                       Print the version.
+markgate completion <shell>            Emit a completion script (bash / zsh / fish / powershell).
 ```
 
 ### Per-invocation overrides

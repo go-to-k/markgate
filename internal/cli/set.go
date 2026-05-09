@@ -10,9 +10,10 @@ import (
 
 func newSetCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "set [key]",
-		Short: "Record the current state hash as the marker (default key: \"default\")",
-		Args:  cobra.MaximumNArgs(1),
+		Use:               "set [key]",
+		Short:             "Record the current state hash as the marker (default key: \"default\")",
+		Args:              cobra.MaximumNArgs(1),
+		ValidArgsFunction: gateKeyCompletion,
 	}
 	overrides := addGateFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {

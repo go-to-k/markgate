@@ -15,9 +15,9 @@ import (
 func runCmd(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 	root := newRootCmd("test")
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
 	root.SetOut(&stdout)
-	root.SetErr(&stderr)
+	root.SetErr(io.Discard)
 	root.SetArgs(args)
 
 	err := root.Execute()
@@ -28,8 +28,9 @@ func runCmd(t *testing.T, args ...string) (int, string) {
 	if errors.As(err, &ee) {
 		return ee.Code, stdout.String()
 	}
-	t.Fatalf("unexpected error type %T: %v\nstderr: %s", err, err, stderr.String())
-	return -1, ""
+	// Mirrors Execute(): unknown errors (e.g. cobra Args validation
+	// rejections) map to exit code 2.
+	return 2, stdout.String()
 }
 
 // initRepo creates a fresh repo in a temp dir, chdirs into it (auto-
@@ -591,5 +592,52 @@ func TestVersion_PrintsInjected(t *testing.T) {
 	}
 	if got := stdout.String(); got != "v1.2.3\n" {
 		t.Errorf("version output = %q, want %q", got, "v1.2.3\n")
+	}
+}
+
+func TestCompletion_GeneratesScripts(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+		t.Run(shell, func(t *testing.T) {
+			code, out := runCmd(t, "completion", shell)
+			if code != 0 {
+				t.Fatalf("completion %s: code = %d, want 0", shell, code)
+			}
+			if len(out) == 0 {
+				t.Errorf("completion %s: empty script", shell)
+			}
+		})
+	}
+}
+
+func TestCompletion_UnknownShellErrors(t *testing.T) {
+	if code, _ := runCmd(t, "completion", "totallybogus"); code != 2 {
+		t.Errorf("unknown shell: code = %d, want 2", code)
+	}
+}
+
+func TestCompletion_GateKeysFromConfig(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  alpha:\n    hash: git-tree\n  beta:\n    hash: git-tree\n")
+
+	code, out := runCmd(t, "__complete", "verify", "")
+	if code != 0 {
+		t.Fatalf("__complete: code = %d, want 0\nout: %s", code, out)
+	}
+	if !bytes.Contains([]byte(out), []byte("alpha")) || !bytes.Contains([]byte(out), []byte("beta")) {
+		t.Errorf("expected alpha and beta in completion output, got:\n%s", out)
+	}
+}
+
+func TestCompletion_NoConfigSilent(t *testing.T) {
+	initRepo(t)
+	code, out := runCmd(t, "__complete", "verify", "")
+	if code != 0 {
+		t.Fatalf("__complete with no config: code = %d, want 0\nout: %s", code, out)
+	}
+	// No suggestions surface as a body that is just the directive line(s),
+	// so neither an alpha-style key nor an error string should appear.
+	if bytes.Contains([]byte(out), []byte("Error")) {
+		t.Errorf("completion errored on missing config:\n%s", out)
 	}
 }

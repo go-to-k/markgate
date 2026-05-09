@@ -21,7 +21,8 @@ func newRunCmd() *cobra.Command {
 			"  markgate verify [key] || ( <cmd> && markgate set [key] )\n\n" +
 			"If [key] is omitted, the default key is used. Arguments after `--`\n" +
 			"are executed verbatim (no shell interpretation).",
-		Args: cobra.MinimumNArgs(1),
+		Args:              cobra.MinimumNArgs(1),
+		ValidArgsFunction: gateKeyCompletion,
 	}
 	overrides := addGateFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
