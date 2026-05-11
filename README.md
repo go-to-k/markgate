@@ -475,6 +475,50 @@ A working wire-up lives in [go-to-k/cdkd](https://github.com/go-to-k/cdkd):
 - [`.claude/hooks/check-gate.sh`](https://github.com/go-to-k/cdkd/blob/main/.claude/hooks/check-gate.sh) — pre-commit hook that runs `markgate verify` for each gate.
 - [`/check`](https://github.com/go-to-k/cdkd/blob/main/.claude/skills/check/SKILL.md) and [`/check-docs`](https://github.com/go-to-k/cdkd/blob/main/.claude/skills/check-docs/SKILL.md) skills produce the markers (the latter has a diff-based short-circuit to keep the LLM cost low on internal src edits).
 
+### 5. Pre-commit: collapse multiple scoped gates into one verify (`composes`)
+
+**Scope**: a parent gate that ANDs the freshness of its children. No own `include:` — the parent has no scope of its own, so its verdict is purely "every child is fresh."
+
+Builds on use case 4. There, the hook had to call `markgate verify` once per child to surface a per-gate error. When the hook only needs *one* verdict ("can this commit proceed?"), a parent that `composes` the children collapses that into a single call.
+
+```yaml
+# .markgate.yml — adds `pre-commit` on top of use case 4's gates
+gates:
+  check:
+    hash: files
+    include:
+      - "src/**"
+      - "tests/**"
+      - "package.json"
+  docs:
+    hash: files
+    include:
+      - "src/**"
+      - "docs/**"
+      - "README.md"
+
+  pre-commit:
+    composes: [check, docs]
+```
+
+**Commands**:
+
+```sh
+# Each child is set as its own check finishes (same as use case 4):
+pnpm typecheck && pnpm lint && pnpm build && markgate set check
+./scripts/check-docs && markgate set docs
+
+# One verify covers both:
+markgate verify pre-commit || {
+  markgate status pre-commit >&2   # names the stale child in the note column
+  exit 1
+}
+```
+
+`markgate set pre-commit` is unconditional — the parent records its marker even if a child is stale. That's the right default for *summary* gates that observe child state.
+
+**Strict variant (`requires`)** — same `verify` propagation, but `markgate set <parent>` is refused (exit 2) when any child is stale, and the error names the offending child. Reach for it when the parent represents an action that *must not happen* before its children pass — `deploy` requiring a fresh `migration` gate, `release` requiring a fresh `e2e` gate. See [Gate dependencies](#gate-dependencies-composes-vs-requires) for the full shape.
+
 ## Advanced configuration
 
 Optional features layered on top of the core `.markgate.yml` shape.
