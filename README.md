@@ -126,62 +126,87 @@ through. Either way, `pnpm build` runs at most once per repo state.
 For other hook managers (husky, lefthook, pre-commit framework), the
 shape is identical — see [Drop into your hook manager](#drop-into-your-hook-manager).
 
-For setups where the hook should **only verify** (the check lives
-elsewhere — multi-step script, CI job, separate skill), see
-[Gate pattern](#gate-pattern-set--verify).
+The shape above is the simplest: one check, one hook, one command.
+As your check setup grows — multiple checks, an aggregate verdict,
+or a check that doesn't fit in a shell command — reach for the split
+form [`set` + `verify`](#gate-pattern-set--verify) instead.
 
 ## Gate pattern: `set` + `verify`
 
-`markgate run -- <cmd>` is the shortest path, but it requires the
-hook to know how to run the check. When the check is **multi-step,
-lives in a different process, or you want the hook to be a pure
-gate**, split `run` into its two halves:
+`markgate run -- <cmd>` bakes the check into the hook. The split
+form inverts it: the check sets its own marker where it lives, and
+the hook just verifies the marker. Zero-config at minimum, scales
+with `.markgate.yml`.
 
-- `markgate set` — record the current state as a marker (after the
-  check passes elsewhere)
-- `markgate verify` — exit 0 if the marker matches, 1 if not
+The two halves:
+
+- `markgate set` — record that the check just passed
+- `markgate verify` — exit 0 if the marker is fresh, 1 if not
+
+### Minimum shape (zero-config)
 
 ```sh
-# Wherever the check actually runs (skill, build script, CI, Make):
-pnpm typecheck
-pnpm lint:fix
-pnpm build
+# Wherever the check actually runs (skill, build script, Make target):
+pnpm typecheck && pnpm lint:fix && pnpm build && markgate set
 
-# Record the pass; markgate's only addition
-markgate set
+# In the hook — pure verdict, with a hint on failure:
+markgate verify || { echo "Run the check before committing." >&2; exit 1; }
 ```
 
-Then the hook only verifies the marker:
+The chain stays in one place. The hook doesn't repeat it — it just
+gates on the marker. On a stale marker, the hook exits 1 instead of
+silently re-running the chain itself; the agent sees the block (and
+the hint) and re-runs the check via its proper entry point.
 
-```json
-// .claude/settings.json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "if": "Bash(git commit*)",
-        "hooks": [
-          { "type": "command", "command": "markgate verify" }
-        ]
-      }
-    ]
-  }
-}
+### Where it pays off: aggregate over multiple checks
+
+As checks accumulate, each one freshens **its own marker** and the
+hook verifies an **aggregate** built from them. The aggregate is a
+`composes` parent gate — it has no own command, just the AND of its
+children.
+
+```yaml
+# .markgate.yml
+gates:
+  check:
+    hash: files
+    include: ["src/**", "tests/**"]
+  docs:
+    hash: files
+    include: ["src/**", "docs/**", "README.md"]
+  pre-commit:
+    composes: [check, docs]
 ```
 
-When this fits better than `run`:
+```sh
+# Each check freshens its own marker, wherever it lives:
+pnpm build && markgate set check
+./scripts/check-docs && markgate set docs
 
-- **Multi-step checks** — with `run`, you'd duplicate the chain
-  (typecheck → lint → build → test) in the hook. Split keeps the
-  chain in the script; the hook stays a single `markgate verify`.
-- **Pure gate hook** — the hook fails fast on un-verified commits
-  without running the check itself, handing control back to the
-  agent which can re-run the check on its own without further
-  prompting.
-- **Commit-then-push** — commit hook: `pnpm build && markgate set`;
-  push hook: `markgate verify`. Both hooks see the same marker, so
-  push skips re-running when nothing has changed since the commit.
+# Hook — one call covers both; status names the stale child on failure:
+markgate verify pre-commit || { markgate status pre-commit >&2; exit 1; }
+```
+
+`markgate run` can't write the parent: `run` executes a single
+command, and the aggregate has none. **Aggregate verify is
+split-only.** Full setup, including the invalidation matrix:
+[use case 5](#5-pre-commit-collapse-multiple-scoped-gates-into-one-verify-composes).
+
+### When to reach for the split form
+
+- **Aggregate verify over multiple checks** — see above; the hook
+  stays one line as the check set grows
+- **The check can't be reduced to a shell command** — LLM-judged
+  review, manual sign-off. See [Enforcing AI checks that aren't
+  commands](#enforcing-ai-checks-that-arent-commands)
+- **Fail-fast over self-healing** — `markgate run` silently runs the
+  check when the agent forgot; `verify` blocks. Pick based on
+  whether you want the agent to feel the miss
+
+If your hook is happy to be the fallback that runs a single check
+when the agent forgets, `markgate run --` is the shorter spelling.
+Reach for `markgate set` + `markgate verify` when checks live in
+their natural places and the hook is a verdict, not a backstop.
 
 ## How it works
 
