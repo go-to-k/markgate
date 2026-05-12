@@ -134,17 +134,20 @@ form [`set` + `verify`](#gate-pattern-set--verify) instead.
 ## Gate pattern: `set` + `verify`
 
 `markgate run -- <cmd>` bakes the check into the hook. The split
-form inverts it: the check sets its own marker where it lives — a
-record that the check just passed against the current state — and
-the hook just verifies the marker. (Marker mechanics — how the hash
-is computed, where the file lives — are in [How it works](#how-it-works)
-below; for now the "pass receipt" picture is enough.) Zero-config at
-minimum, scales with `.markgate.yml`.
+form inverts it: the check sets its own marker where it lives —
+capturing the code state at the moment it passed — and the hook
+just verifies the marker. If the code hasn't changed since then,
+the marker still matches and `verify` exits 0; if it has, the
+marker diverges and `verify` exits 1. (Mechanics — how the hash is
+computed, where the file lives — are in [How it works](#how-it-works)
+below; for now the "pass receipt" picture is enough.) Zero-config
+at minimum, scales with `.markgate.yml`.
 
 The two halves:
 
-- `markgate set` — record that the check just passed
-- `markgate verify` — exit 0 if the marker is fresh, 1 if not
+- `markgate set` — record the moment the check passed as a marker
+- `markgate verify` — exit 0 if the code hasn't changed since the
+  marker was recorded, 1 if it has
 
 ### Minimum shape (zero-config)
 
@@ -165,8 +168,9 @@ the hint) and re-runs the check via its proper entry point.
 
 As checks accumulate, each one freshens **its own marker** and the
 hook verifies an **aggregate** built from them. The aggregate is a
-`composes` parent gate — it has no own command, just the AND of its
-children.
+parent gate that bundles its children via `composes` — call it an
+**aggregate gate**. It has no command of its own, just the AND of
+its children.
 
 ```yaml
 # .markgate.yml
@@ -190,9 +194,9 @@ pnpm build && markgate set check
 markgate verify pre-commit || { markgate status pre-commit >&2; exit 1; }
 ```
 
-`markgate run` can't write the parent: `run` executes a single
-command, and the aggregate has none. **Aggregate verify is
-split-only.** Full setup, including the invalidation matrix:
+`markgate run` can't write an aggregate gate: `run` executes a
+single command, and an aggregate gate has none. **Aggregate verify
+is split-only.** Full setup, including the invalidation matrix:
 [use case 5](#5-pre-commit-collapse-multiple-scoped-gates-into-one-verify-composes).
 
 ### When to reach for the split form
@@ -202,9 +206,10 @@ split-only.** Full setup, including the invalidation matrix:
 - **The check can't be reduced to a shell command** — LLM-judged
   review, manual sign-off. See [Enforcing AI checks that aren't
   commands](#enforcing-ai-checks-that-arent-commands)
-- **Fail-fast over self-healing** — `markgate run` silently runs the
-  check when the agent forgot; `verify` blocks. Pick based on
-  whether you want the agent to feel the miss
+- **Block, or run the work instead?** — `markgate run` covers for
+  the agent by running the check itself when it's forgotten;
+  `verify` blocks at the gate so the agent gets a "you forgot"
+  signal and re-runs. Pick the behavior you want
 
 If your hook is happy to be the fallback that runs a single check
 when the agent forgets, `markgate run --` is the shorter spelling.
