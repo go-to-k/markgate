@@ -134,9 +134,12 @@ form [`set` + `verify`](#gate-pattern-set--verify) instead.
 ## Gate pattern: `set` + `verify`
 
 `markgate run -- <cmd>` bakes the check into the hook. The split
-form inverts it: the check sets its own marker where it lives, and
-the hook just verifies the marker. Zero-config at minimum, scales
-with `.markgate.yml`.
+form inverts it: the check sets its own marker where it lives — a
+record that the check just passed against the current state — and
+the hook just verifies the marker. (Marker mechanics — how the hash
+is computed, where the file lives — are in [How it works](#how-it-works)
+below; for now the "pass receipt" picture is enough.) Zero-config at
+minimum, scales with `.markgate.yml`.
 
 The two halves:
 
