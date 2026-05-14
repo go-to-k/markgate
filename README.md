@@ -1,8 +1,9 @@
 # markgate
 
-Smart hooks for AI coding agents such as Claude Code. Fires only
-when your AI coding agent forgot the check, gates on **non-command
-checks**, and aggregates **multi-check verdicts** into one.
+`markgate` makes hooks for AI coding agents (such as Claude Code)
+skip the duplicate work the agent already ran, gate on **non-command
+checks** (LLM review, sign-off), and aggregate **multi-check
+verdicts** into one.
 
 ## Why this exists
 
@@ -23,16 +24,16 @@ So you add a pre-commit hook to enforce the check. Now every commit
 runs the check twice, once by the agent, once by the hook. Heavy
 checks slow the dev loop; light ones still add up.
 
-![Skill and hook double-run the check](docs/images/duplicate-execution.png)
+![Agent and hook double-run the check](docs/images/duplicate-execution.png)
 
 Pulling the check out of the agent and leaving it only in the hook
 isn't the answer — you can't run it before you're ready to commit.
-Per-edit hooks aren't either — they pay the cost on every keystroke.
+Per-edit hooks aren't either — they pay the cost on every edit.
 
 `markgate run` resolves the dilemma: keeping both the check site and
-the hook in place, **the hook fires only when the agent forgets**.
-When the agent ran the check properly, **the hook is skipped** — no
-duplicate execution.
+the hook in place, **the hook re-runs the check only when the agent
+forgot**. When the agent ran the check properly, **the hook becomes
+a near-instant no-op** — no duplicate execution.
 
 ![markgate run fires the hook only when the agent forgot](docs/images/markgate-resolves.png)
 
@@ -78,10 +79,12 @@ markgate verify || { echo "Run /check-docs before committing." >&2; exit 1; }
 
 As checks accumulate — code check, docs check, vuln scan — a single
 pre-commit hook needs to verify all of them. Stuffing every check
-into the hook brings duplicate execution back. Calling `markgate
-verify` once per check works, but each check's scope leaks: a code
-edit re-runs the docs check, a docs edit re-runs the vuln scan,
-even when they shouldn't.
+into the hook brings duplicate execution back. The default
+whole-repo hash also makes every check's scope leak: a code-only
+edit invalidates the docs marker, a docs-only edit invalidates the
+vuln-scan marker, so the hook re-fires checks that nothing relevant
+moved. And lining up N `markgate verify` calls in the hook
+clutters the hook config in proportion to how many checks you add.
 
 ![Without scoped gates, every check fires on unrelated changes](docs/images/multi-check-problem.png)
 
@@ -218,8 +221,8 @@ does?" isn't a regex. Without markgate, hooks can't gate on these.
 
 markgate gives the hook a grip. The AI skill that performs the
 review ends in `markgate set`; the hook runs `markgate verify`. When
-the agent forgets the skill, the marker is stale, the hook blocks,
-and the agent is pointed back at the skill.
+the agent forgets the skill, the marker is missing or stale, the
+hook blocks, and the agent is pointed back at the skill.
 
 ```sh
 # At the end of /check-docs (Claude Code skill body):
@@ -228,12 +231,6 @@ markgate set
 # In a pre-commit hook (.claude/settings.json, PreToolUse on git commit*):
 markgate verify || { echo "Run /check-docs before committing." >&2; exit 1; }
 ```
-
-Why the agent can't trivially bypass it: `markgate set` lives at the
-end of the skill body, so an agent told to run `/check-docs` would
-have to skip the skill *and* call `markgate set` directly — more
-work than just running the skill. The skill is the discipline; the
-hook is the enforcement.
 
 ### Pattern 3: aggregate multiple checks (`.markgate.yml` + `composes`)
 
