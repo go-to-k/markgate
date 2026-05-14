@@ -54,8 +54,6 @@ them; a human can sign them off — a hook can't execute either. So
 even when the agent is supposed to do the check, the hook has no
 grip on whether it actually happened.
 
-![Hook can't run a non-command check](docs/images/non-command-check.png)
-
 `markgate set` + `markgate verify` give the hook a grip by splitting
 the run. The check — wherever it naturally lives, like a
 `/check-docs` skill or a manual sign-off step — ends with
@@ -85,8 +83,6 @@ edit invalidates the docs marker, a docs-only edit invalidates the
 vuln-scan marker, so the hook re-fires checks that nothing relevant
 moved. And lining up N `markgate verify` calls in the hook
 clutters the hook config in proportion to how many checks you add.
-
-![Without scoped gates, every check fires on unrelated changes](docs/images/multi-check-problem.png)
 
 With `.markgate.yml`, each check gets its own **scoped gate** (its
 own `include` globs), and the hook verifies a **parent gate** that
