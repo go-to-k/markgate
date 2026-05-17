@@ -155,112 +155,6 @@ for the invalidation matrix and a real-world wire-up, and
 [Gate dependencies](#gate-dependencies-composes-vs-requires) for the
 strict variant (`requires`) that refuses `set` on a stale child.
 
-## Install
-
-> **Note:** `markgate` is meant to run inside a git repository.
-
-### Homebrew (macOS / Linux)
-
-```sh
-brew install go-to-k/tap/markgate
-```
-
-### Shell script (macOS / Linux / Windows with Git Bash)
-
-```sh
-# Latest
-curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash
-
-# Pin a version
-curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash -s -- v0.1.0
-```
-
-### mise
-
-Pin a version per repo via [`.mise.toml`](https://mise.jdx.dev/configuration.html):
-
-```toml
-[tools]
-"ubi:go-to-k/markgate" = "0.2.0"
-```
-
-Or one-shot:
-
-```sh
-mise use "ubi:go-to-k/markgate@0.2.0"
-```
-
-### `go install`
-
-```sh
-go install github.com/go-to-k/markgate/cmd/markgate@latest
-```
-
-### Prebuilt binaries
-
-Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
-[GitHub Releases](https://github.com/go-to-k/markgate/releases).
-
-## How it works
-
-When `markgate run -- <cmd>` is invoked:
-
-1. It computes a **hash** of the current repo state.
-2. If a saved marker matches, `<cmd>` is skipped (exit 0
-   immediately).
-3. Otherwise `<cmd>` runs. On success, the hash is saved as the new
-   marker. On failure, the marker is left untouched.
-
-(For the split shape, `markgate set` writes step 3's marker;
-`markgate verify` does step 2's match check.)
-
-```sh
-# First run — nothing cached yet, so `pnpm build` runs and the pass is cached.
-$ markgate run -- pnpm build
-building...
-passed in 7.2s
-
-# Second run — nothing changed since the last success: instant skip.
-$ markgate run -- pnpm build
-
-# After you edit a file — cache is stale, `pnpm build` runs again.
-$ echo '// fix typo' >> src/foo.ts
-$ markgate run -- pnpm build
-building...
-passed in 7.1s
-```
-
-The marker is a small JSON file under `.git/markgate/`, one per
-gate (the file name matches the gate name, e.g. `default.json`).
-Not committed, not tracked, isolated per worktree. With
-`--state-dir <dir>`, `MARKGATE_STATE_DIR=<dir>`, or `state_dir:`
-in `.markgate.yml`, markers go to `<dir>/` instead — see [Sharing
-markers](#sharing-markers-across-machines-ci--teammates). The
-on-disk JSON layout is an implementation detail; don't parse it.
-
-## Setting up `.markgate.yml`
-
-Lives at `$(git rev-parse --show-toplevel)/.markgate.yml` (no
-parent-dir walking).
-
-`markgate init` writes a starter file at the repo root:
-
-```sh
-markgate init          # writes .markgate.yml at the repo root
-markgate init --force  # overwrite an existing one
-```
-
-The generated file enables the `default` gate with `git-tree` hash,
-plus commented-out examples (an `exclude` list on `git-tree` and a
-`files`-type gate) — uncomment what you need.
-
-Each gate picks a `hash` strategy: **`git-tree`** (default;
-re-verify on any repo change — broad gates like a pre-commit
-lint/test/build) or **`files`** (re-verify only when listed paths
-change — narrow gates for docs, vuln scan on a lockfile, coverage
-for a sub-tree). The full field list and the strategy comparison
-live in [`.markgate.yml` reference](#markgateyml-reference) below.
-
 ## Use cases
 
 Each section follows the same shape: **Scope** (what triggers
@@ -442,6 +336,112 @@ markgate verify pre-commit || {
 `markgate set pre-commit` is unconditional — the parent records its marker even if a child is stale. That's the right default for *summary* gates that observe child state.
 
 **Strict variant (`requires`)** — same `verify` propagation, but `markgate set <parent>` is refused (exit 2) when any child is stale, and the error names the offending child. Reach for it when the parent represents an action that *must not happen* before its children pass — `deploy` requiring a fresh `migration` gate, `release` requiring a fresh `e2e` gate. See [Gate dependencies](#gate-dependencies-composes-vs-requires) for the full shape.
+
+## Install
+
+> **Note:** `markgate` is meant to run inside a git repository.
+
+### Homebrew (macOS / Linux)
+
+```sh
+brew install go-to-k/tap/markgate
+```
+
+### Shell script (macOS / Linux / Windows with Git Bash)
+
+```sh
+# Latest
+curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash
+
+# Pin a version
+curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash -s -- v0.1.0
+```
+
+### mise
+
+Pin a version per repo via [`.mise.toml`](https://mise.jdx.dev/configuration.html):
+
+```toml
+[tools]
+"ubi:go-to-k/markgate" = "0.2.0"
+```
+
+Or one-shot:
+
+```sh
+mise use "ubi:go-to-k/markgate@0.2.0"
+```
+
+### `go install`
+
+```sh
+go install github.com/go-to-k/markgate/cmd/markgate@latest
+```
+
+### Prebuilt binaries
+
+Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
+[GitHub Releases](https://github.com/go-to-k/markgate/releases).
+
+## How it works
+
+When `markgate run -- <cmd>` is invoked:
+
+1. It computes a **hash** of the current repo state.
+2. If a saved marker matches, `<cmd>` is skipped (exit 0
+   immediately).
+3. Otherwise `<cmd>` runs. On success, the hash is saved as the new
+   marker. On failure, the marker is left untouched.
+
+(For the split shape, `markgate set` writes step 3's marker;
+`markgate verify` does step 2's match check.)
+
+```sh
+# First run — nothing cached yet, so `pnpm build` runs and the pass is cached.
+$ markgate run -- pnpm build
+building...
+passed in 7.2s
+
+# Second run — nothing changed since the last success: instant skip.
+$ markgate run -- pnpm build
+
+# After you edit a file — cache is stale, `pnpm build` runs again.
+$ echo '// fix typo' >> src/foo.ts
+$ markgate run -- pnpm build
+building...
+passed in 7.1s
+```
+
+The marker is a small JSON file under `.git/markgate/`, one per
+gate (the file name matches the gate name, e.g. `default.json`).
+Not committed, not tracked, isolated per worktree. With
+`--state-dir <dir>`, `MARKGATE_STATE_DIR=<dir>`, or `state_dir:`
+in `.markgate.yml`, markers go to `<dir>/` instead — see [Sharing
+markers](#sharing-markers-across-machines-ci--teammates). The
+on-disk JSON layout is an implementation detail; don't parse it.
+
+## Setting up `.markgate.yml`
+
+Lives at `$(git rev-parse --show-toplevel)/.markgate.yml` (no
+parent-dir walking).
+
+`markgate init` writes a starter file at the repo root:
+
+```sh
+markgate init          # writes .markgate.yml at the repo root
+markgate init --force  # overwrite an existing one
+```
+
+The generated file enables the `default` gate with `git-tree` hash,
+plus commented-out examples (an `exclude` list on `git-tree` and a
+`files`-type gate) — uncomment what you need.
+
+Each gate picks a `hash` strategy: **`git-tree`** (default;
+re-verify on any repo change — broad gates like a pre-commit
+lint/test/build) or **`files`** (re-verify only when listed paths
+change — narrow gates for docs, vuln scan on a lockfile, coverage
+for a sub-tree). The full field list and the strategy comparison
+live in [`.markgate.yml` reference](#markgateyml-reference) below.
 
 ## `.markgate.yml` reference
 
