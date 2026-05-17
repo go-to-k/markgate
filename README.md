@@ -81,10 +81,11 @@ whether it actually happened.
 
 `markgate set` + `markgate verify` give the hook a grip by splitting
 the run. The skill — wherever it naturally lives, like `/check-docs`,
-`/investigate-aws`, or any agent-driven step — ends with `markgate set` to
-record the pass. The hook calls `markgate verify` to read the marker.
-The hook still can't run the skill itself, but it can **refuse to
-proceed unless the marker confirms it ran**.
+`/investigate-aws`, or any agent-driven step — ends with `markgate set`,
+which writes a small **marker** recording the pass. The hook calls
+`markgate verify` to read it. The hook still can't run the skill
+itself, but it can **refuse to proceed unless the marker confirms it
+ran**.
 
 ![set drops a marker; verify reads it](docs/images/markgate-set-verify.png)
 
