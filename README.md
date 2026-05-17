@@ -238,7 +238,7 @@ in `.markgate.yml`, markers go to `<dir>/` instead — see [Sharing
 markers](#sharing-markers-across-machines-ci--teammates). The
 on-disk JSON layout is an implementation detail; don't parse it.
 
-## `.markgate.yml` reference
+## Setting up `.markgate.yml`
 
 Lives at `$(git rev-parse --show-toplevel)/.markgate.yml` (no
 parent-dir walking).
@@ -254,71 +254,12 @@ The generated file enables the `default` gate with `git-tree` hash,
 plus commented-out examples (an `exclude` list on `git-tree` and a
 `files`-type gate) — uncomment what you need.
 
-Per-gate fields:
-
-| field | purpose |
-| --- | --- |
-| `hash` | `git-tree` (default) or `files` |
-| `include` | glob list; required for `hash: files` |
-| `exclude` | glob list |
-| `state_dir` | optional override of marker storage location — see [Sharing markers](#sharing-markers-across-machines-ci--teammates) |
-| `ttl` | optional wall-clock expiry for the marker — see [Wall-clock expiry (`ttl`)](#wall-clock-expiry-ttl) |
-| `composes` | child gate keys whose freshness is ANDed into this one — see [Gate dependencies](#gate-dependencies-composes-vs-requires) |
-| `requires` | like `composes`, but `set` of this gate is refused unless every required child is fresh — see [Gate dependencies](#gate-dependencies-composes-vs-requires) |
-
-Example:
-
-```yaml
-gates:
-  default:
-    hash: git-tree
-    exclude:
-      - "vendor/**"
-      - "node_modules/**"
-
-  pre-pr:
-    hash: files
-    include:
-      - "docs/**"
-      - "README.md"
-    exclude:
-      - "**/*.txt"
-```
-
-Each gate's key (the YAML map key — `default`, `pre-pr` above) must
-match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII). `default` is what
-`markgate set` / `verify` use when no key argument is given:
-
-```sh
-markgate set               # same as `markgate set default`
-markgate set pre-pr        # a second, independent gate
-```
-
-### Hashing strategies: `git-tree` vs `files`
-
-The `hash` field above picks one of two strategies:
-
-| aspect | `git-tree` (default) | `files` |
-| --- | --- | --- |
-| What it hashes | `HEAD` + diff-vs-HEAD ∪ untracked-not-ignored | whatever matches your `include` globs |
-| `HEAD` in the hash? | **Yes** | **No** |
-| Commits invalidate the marker? | Yes | Only if they touch in-scope files |
-| `.gitignore` respected? | Yes (automatic) | No — scope is explicit |
-| Needs config? | No | Yes (`include` required) |
-
-When to use which:
-
-- **`git-tree`** = "re-verify on *any* repo change". Broad gates
-  (pre-commit running lint/test/build). Add `exclude` patterns to
-  skip `vendor/`, `node_modules/`, etc. — HEAD-aware invalidation
-  is kept.
-- **`files`** = "re-verify *only* when these paths change, ignore
-  other commits". Narrow gates (docs consistency, vuln scan rooted
-  on a lockfile, coverage for one sub-tree).
-
-Rule of thumb: start with `git-tree` (add `exclude` if needed).
-Reach for `files` only when you specifically want the "ignore
-commits that don't touch these paths" semantics.
+Each gate picks a `hash` strategy: **`git-tree`** (default;
+re-verify on any repo change — broad gates like a pre-commit
+lint/test/build) or **`files`** (re-verify only when listed paths
+change — narrow gates for docs, vuln scan on a lockfile, coverage
+for a sub-tree). The full field list and the strategy comparison
+live in [`.markgate.yml` reference](#markgateyml-reference) below.
 
 ## Use cases
 
@@ -502,11 +443,77 @@ markgate verify pre-commit || {
 
 **Strict variant (`requires`)** — same `verify` propagation, but `markgate set <parent>` is refused (exit 2) when any child is stale, and the error names the offending child. Reach for it when the parent represents an action that *must not happen* before its children pass — `deploy` requiring a fresh `migration` gate, `release` requiring a fresh `e2e` gate. See [Gate dependencies](#gate-dependencies-composes-vs-requires) for the full shape.
 
-## Advanced configuration
+## `.markgate.yml` reference
 
-Optional features layered on top of the core `.markgate.yml` shape.
-Skip this section unless you hit one of the use cases below; the
-basic gate pattern works without either of them.
+Per-gate fields:
+
+| field | purpose |
+| --- | --- |
+| `hash` | `git-tree` (default) or `files` |
+| `include` | glob list; required for `hash: files` |
+| `exclude` | glob list |
+| `state_dir` | optional override of marker storage location — see [Sharing markers](#sharing-markers-across-machines-ci--teammates) |
+| `ttl` | optional wall-clock expiry for the marker — see [Wall-clock expiry (`ttl`)](#wall-clock-expiry-ttl) |
+| `composes` | child gate keys whose freshness is ANDed into this one — see [Gate dependencies](#gate-dependencies-composes-vs-requires) |
+| `requires` | like `composes`, but `set` of this gate is refused unless every required child is fresh — see [Gate dependencies](#gate-dependencies-composes-vs-requires) |
+
+Example:
+
+```yaml
+gates:
+  default:
+    hash: git-tree
+    exclude:
+      - "vendor/**"
+      - "node_modules/**"
+
+  pre-pr:
+    hash: files
+    include:
+      - "docs/**"
+      - "README.md"
+    exclude:
+      - "**/*.txt"
+```
+
+Each gate's key (the YAML map key — `default`, `pre-pr` above) must
+match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII). `default` is what
+`markgate set` / `verify` use when no key argument is given:
+
+```sh
+markgate set               # same as `markgate set default`
+markgate set pre-pr        # a second, independent gate
+```
+
+### Hashing strategies: `git-tree` vs `files`
+
+The `hash` field above picks one of two strategies:
+
+| aspect | `git-tree` (default) | `files` |
+| --- | --- | --- |
+| What it hashes | `HEAD` + diff-vs-HEAD ∪ untracked-not-ignored | whatever matches your `include` globs |
+| `HEAD` in the hash? | **Yes** | **No** |
+| Commits invalidate the marker? | Yes | Only if they touch in-scope files |
+| `.gitignore` respected? | Yes (automatic) | No — scope is explicit |
+| Needs config? | No | Yes (`include` required) |
+
+When to use which:
+
+- **`git-tree`** = "re-verify on *any* repo change". Broad gates
+  (pre-commit running lint/test/build). Add `exclude` patterns to
+  skip `vendor/`, `node_modules/`, etc. — HEAD-aware invalidation
+  is kept.
+- **`files`** = "re-verify *only* when these paths change, ignore
+  other commits". Narrow gates (docs consistency, vuln scan rooted
+  on a lockfile, coverage for one sub-tree).
+
+Rule of thumb: start with `git-tree` (add `exclude` if needed).
+Reach for `files` only when you specifically want the "ignore
+commits that don't touch these paths" semantics.
+
+`ttl`, `composes`, and `requires` are **optional** — the basic
+gate pattern works without them. Skip the rest of this section
+unless you hit one of the patterns above.
 
 ### Wall-clock expiry (`ttl`)
 
