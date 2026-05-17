@@ -75,23 +75,23 @@ markgate set
 markgate verify || { echo "Run /check-docs before committing." >&2; exit 1; }
 ```
 
-### 3. Multi-check verdicts: many checks, one hook decision
+### 3. Scope leak: tasks fire when unrelated files change, and the hook grows with each new task
 
-As checks accumulate — code check, docs check, vuln scan — a single
-pre-commit hook needs to verify all of them. Stuffing every check
-into the hook brings duplicate execution back. The default
-whole-repo hash also makes every check's scope leak: a code-only
-edit invalidates the docs marker, a docs-only edit invalidates the
-vuln-scan marker, so the hook re-fires checks that nothing relevant
-moved. And lining up N `markgate verify` calls in the hook
-clutters the hook config in proportion to how many checks you add.
+As tasks accumulate — code check on `src/**`, docs review on
+`docs/**`, vuln scan on `package-lock.json` — you want each one to
+**fire only when its own files change**. The default whole-repo
+hash doesn't allow that: a code-only edit invalidates the docs
+marker, a docs-only edit invalidates the vuln-scan marker, so the
+hook re-fires tasks that nothing relevant moved. And lining up N
+`markgate verify` calls in the hook clutters the config in
+proportion to how many tasks you add.
 
-With `.markgate.yml`, each check gets its own **scoped gate** (its
+With `.markgate.yml`, each task gets its own **scoped gate** (its
 own `include` globs), and the hook verifies a **parent gate** that
-ANDs them all via `composes:`. Code edits invalidate only the code
-gate. Docs edits invalidate only the docs gate. Edits outside every
-scope (CI config, editor settings) invalidate nothing — the hook
-stays silent.
+ANDs them all via `composes:`. The code check fires when `src/**`
+moves; the docs review fires when `docs/**` moves. Edits outside
+every scope (CI config, editor settings) invalidate nothing — the
+hook stays silent.
 
 ```yaml
 # .markgate.yml
@@ -111,7 +111,7 @@ gates:
 Adoption:
 
 ```sh
-# Each check freshens its own marker, wherever it lives:
+# Each task freshens its own marker, wherever it lives:
 pnpm build && markgate set check
 ./scripts/check-docs && markgate set docs
 
@@ -228,15 +228,15 @@ markgate set
 markgate verify || { echo "Run /check-docs before committing." >&2; exit 1; }
 ```
 
-### Pattern 3: aggregate multiple checks (`.markgate.yml` + `composes`)
+### Pattern 3: scope each task to its files, aggregate the verdict (`.markgate.yml` + `composes`)
 
-When checks accumulate, drop a `.markgate.yml` at the repo root
+When tasks accumulate, drop a `.markgate.yml` at the repo root
 (`markgate init` writes one). Two primitives stack:
 
-- **Scoped gates** — each check gets its own `hash: files` +
-  `include` globs, so unrelated commits don't invalidate the marker
+- **Scoped gates** — each task gets its own `hash: files` +
+  `include` globs, so it fires only when its own files change
 - **Composes** — a parent gate ANDs the freshness of its children,
-  so the hook calls one `verify` regardless of how many checks
+  so the hook calls one `verify` regardless of how many tasks
 
 ```yaml
 # .markgate.yml
@@ -253,7 +253,7 @@ gates:
 ```
 
 ```sh
-# Each check freshens its own marker as it finishes:
+# Each task freshens its own marker as it finishes:
 pnpm typecheck && pnpm lint && pnpm build && markgate set check
 ./scripts/check-docs && markgate set docs
 
