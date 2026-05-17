@@ -130,6 +130,9 @@ gates:
     composes: [check, docs]
 ```
 
+Once each task owns its scope, the hook needs **just one verify** —
+when every child is fresh, the parent passes.
+
 ![Children freshen markers; parent verify ANDs them](docs/images/composes-aggregate.png)
 
 Adoption:
