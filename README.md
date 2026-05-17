@@ -150,8 +150,10 @@ markgate verify pre-commit || { markgate status pre-commit >&2; exit 1; }
 command, and an aggregate gate has none. **Aggregate verify is
 split-only.**
 
-See [Use case 5](#5-pre-commit-collapse-multiple-scoped-gates-into-one-verify-composes)
-for the invalidation matrix and a real-world wire-up, and
+See [Use case 4](#4-pre-commit-isolate-a-slow-check-with-its-own-scoped-gate)
+for the invalidation matrix and a real-world wire-up,
+[Use case 5](#5-pre-commit-collapse-multiple-scoped-gates-into-one-verify-composes)
+for the aggregate `composes` shape on top of it, and
 [Gate dependencies](#gate-dependencies-composes-vs-requires) for the
 strict variant (`requires`) that refuses `set` on a stale child.
 
