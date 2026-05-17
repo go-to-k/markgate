@@ -1,8 +1,9 @@
 # markgate
 
-`markgate` makes hooks for AI coding agents skip the duplicate work
-the agent already ran, gate on **non-command tasks** (LLM review,
-manual sign-off), and aggregate **multi-task verdicts** into one.
+`markgate` mechanically enforces any required task on AI coding
+agents — skip **duplicate work** the agent already ran, enforce
+**non-command tasks** (LLM review, manual sign-off), and aggregate
+**multi-task verdicts** into one.
 
 ## Why this exists
 
