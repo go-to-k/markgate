@@ -2,14 +2,16 @@
 
 `markgate` makes hooks for AI coding agents (such as Claude Code)
 skip the duplicate work the agent already ran, gate on **non-command
-checks** (LLM review, sign-off), and aggregate **multi-check
-verdicts** into one.
+tasks** (LLM review, sign-off, code generation), and aggregate
+**multi-task verdicts** into one.
 
 ## Why this exists
 
-Hooks have three failure modes when an AI coding agent is in the
-loop. markgate addresses each with one of two primitives —
-`markgate run` (one-shot) or `markgate set` + `markgate verify`
+Hooks have three failure modes when you want an AI coding agent to
+reliably run a required task — a check (lint, test, build), an
+LLM-judged review, a code-generation step, or any operation with a
+pass/fail outcome. markgate addresses each with one of two primitives
+— `markgate run` (one-shot) or `markgate set` + `markgate verify`
 (the Gate pattern).
 
 ### 1. Duplicate execution: the hook re-runs a check the agent already ran
@@ -46,20 +48,22 @@ Adoption is one line — prefix your check command:
 
 Drop the same line into the hook, and you're done.
 
-### 2. Non-command enforcement: the hook can't run the check itself
+### 2. Non-command enforcement: the hook can't run the task itself
 
-Some checks aren't commands. "Are these docs still consistent with
-the code?" "Did a reviewer sign off on this diff?" An LLM can judge
-them; a human can sign them off — a hook can't execute either. So
-even when the agent is supposed to do the check, the hook has no
-grip on whether it actually happened.
+Some tasks aren't commands. "Are these docs still consistent with
+the code?" "Did a reviewer sign off on this diff?" "Have the types
+been regenerated for the latest schema?" An LLM can judge them, a
+human can sign them off, a skill can perform them — a hook can't
+execute any of these. So even when the agent is supposed to do the
+task, the hook has no grip on whether it actually happened.
 
 `markgate set` + `markgate verify` give the hook a grip by splitting
-the run. The check — wherever it naturally lives, like a
-`/check-docs` skill or a manual sign-off step — ends with
-`markgate set` to record the pass. The hook calls `markgate verify`
-to read the marker. The hook still can't run the LLM judgment, but
-it can **refuse to proceed unless the marker confirms it ran**.
+the run. The task — wherever it naturally lives, like a
+`/check-docs` skill, a `/generate-types` step, or a manual sign-off
+script — ends with `markgate set` to record the pass. The hook
+calls `markgate verify` to read the marker. The hook still can't
+run the task itself, but it can **refuse to proceed unless the
+marker confirms it ran**.
 
 ![set drops a marker; verify reads it](docs/images/markgate-set-verify.png)
 
@@ -205,20 +209,19 @@ In your Claude Code `PreToolUse` hook on `git commit*`:
 For other hook managers (husky, lefthook, pre-commit framework), the
 shape is identical — see [Drop into your hook manager](#drop-into-your-hook-manager).
 
-### Pattern 2: enforce non-command checks (`set` + `verify`)
+### Pattern 2: enforce non-command tasks (`set` + `verify`)
 
 Hooks can only execute commands, so on their own they enforce only
-**mechanical** checks (lint, tests, build). Reviews that need AI
-judgment — docs consistency with src, naming consistency with
-existing symbols, "does the PR description match the diff?" — can't
-be reduced to a command. The mechanical layer can spot a typo or a
-bad import, but "are these docs still in sync with what the code
-does?" isn't a regex. Without markgate, hooks can't gate on these.
+**mechanical** tasks (lint, tests, build). Anything else — an LLM
+judgment ("are these docs still in sync with what the code does?"),
+a manual sign-off, a skill-driven step like `/generate-types` or
+`/update-changelog` — can't be reduced to a command. Without
+markgate, hooks have no way to gate on these.
 
-markgate gives the hook a grip. The AI skill that performs the
-review ends in `markgate set`; the hook runs `markgate verify`. When
-the agent forgets the skill, the marker is missing or stale, the
-hook blocks, and the agent is pointed back at the skill.
+markgate gives the hook a grip. The skill that performs the task
+ends in `markgate set`; the hook runs `markgate verify`. When the
+agent forgets to run the skill, the marker is missing or stale,
+the hook blocks, and the agent is pointed back at the skill.
 
 ```sh
 # At the end of /check-docs (Claude Code skill body):
@@ -396,7 +399,7 @@ re-verify — a [`hash`](#hashing-strategies-git-tree-vs-files)
 strategy) → **Commands** (what goes in your shell / hook). All
 examples below use scoped `files`-hash gates defined in
 [`.markgate.yml`](#markgateyml-reference) at the repo root, and the
-[`set` + `verify` shape](#pattern-2-enforce-non-command-checks-set--verify)
+[`set` + `verify` shape](#pattern-2-enforce-non-command-tasks-set--verify)
 above. (For the broad whole-repo `git-tree` shape with no config,
 see [Pattern 1](#pattern-1-skip-duplicate-runs-markgate-run).)
 
@@ -692,7 +695,7 @@ expects.
 Substitute `pnpm build` with your verification command. Use
 `markgate run --` when the hook itself runs the check, or
 `markgate verify` when it sits in front of a separate `markgate set`
-(see [Pattern 2](#pattern-2-enforce-non-command-checks-set--verify)).
+(see [Pattern 2](#pattern-2-enforce-non-command-tasks-set--verify)).
 
 **husky** — `.husky/pre-commit`:
 
@@ -741,7 +744,7 @@ repos:
 ```
 
 In your `/check` skill: `pnpm build && markgate set`. See
-[Pattern 2](#pattern-2-enforce-non-command-checks-set--verify) for the
+[Pattern 2](#pattern-2-enforce-non-command-tasks-set--verify) for the
 full flow.
 
 ## Command model
@@ -757,7 +760,7 @@ returned as-is.
 ### `markgate set` / `markgate verify` (split)
 
 The two halves of `run`. See
-[Pattern 2](#pattern-2-enforce-non-command-checks-set--verify) for
+[Pattern 2](#pattern-2-enforce-non-command-tasks-set--verify) for
 when to use the split shape.
 
 ```sh
