@@ -140,7 +140,8 @@ Adoption:
 ```sh
 # Each task freshens its own marker, wherever it lives:
 pnpm build && markgate set check
-./scripts/check-docs && markgate set docs
+# Inside the /check-docs skill body (LLM-led — see Pattern 2):
+markgate set docs
 
 # One verify in the hook covers both:
 markgate verify pre-commit || { markgate status pre-commit >&2; exit 1; }
@@ -186,7 +187,8 @@ gates:
 **Commands**:
 
 ```sh
-./scripts/check-docs && markgate set pre-pr
+# Inside the /check-docs skill body (LLM-led — see Pattern 2):
+markgate set pre-pr
 
 # Before `gh pr create`:
 markgate verify pre-pr || {
@@ -281,8 +283,9 @@ The last row is what makes the idiom scale: edits that land in neither `include`
 # Fast code check (src / tests / config):
 pnpm typecheck && pnpm lint && pnpm build && markgate set check
 
-# Slow docs consistency check (src / docs / README):
-./scripts/check-docs && markgate set docs
+# Slow docs consistency check (src / docs / README) — inside the /check-docs
+# skill body (LLM-led — see Pattern 2):
+markgate set docs
 
 # One pre-commit hook verifies both; the failing gate names itself:
 markgate verify check || { echo "run the code check" >&2; exit 1; }
@@ -326,7 +329,8 @@ gates:
 ```sh
 # Each child is set as its own check finishes (same as use case 4):
 pnpm typecheck && pnpm lint && pnpm build && markgate set check
-./scripts/check-docs && markgate set docs
+# Inside the /check-docs skill body (LLM-led — see Pattern 2):
+markgate set docs
 
 # One verify covers both:
 markgate verify pre-commit || {
