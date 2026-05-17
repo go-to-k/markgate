@@ -1,11 +1,11 @@
 # markgate
 
-`markgate` mechanically enforces any required task on AI coding
-agents — skip **duplicate work** the agent already ran, enforce
-**non-command tasks** (LLM review, manual sign-off), and aggregate
-**multi-task verdicts** into one.
+`markgate` is the enforcement layer between an AI coding agent and
+its hooks — ensure **non-duplicate runs**, enforce **non-command
+tasks** (LLM review, manual sign-off), and aggregate **multi-task
+verdicts** into one.
 
-## Why this exists
+## What markgate does
 
 Hooks have three failure modes when you want an AI coding agent to
 reliably run a required task — a check (lint, test, build), an
@@ -14,7 +14,7 @@ pass/fail outcome. markgate addresses each with one of two primitives
 — `markgate run` (one-shot) or `markgate set` + `markgate verify`
 (the Gate pattern).
 
-### 1. Duplicate execution: the hook re-runs a check the agent already ran
+### Pattern 1: ensure non-duplicate runs (`markgate run`)
 
 You tell your coding agent to run `/check` (test, lint, build, doc
 consistency) before committing. **Sometimes it forgets** — context
@@ -39,16 +39,38 @@ a near-instant no-op** — no duplicate execution.
 
 ![markgate run fires the hook only when the agent forgot](docs/images/markgate-resolves.png)
 
-Adoption is one line — prefix your check command:
+Adoption is one line — prefix your check command in **both** the place
+that runs it and the hook that enforces it:
 
 ```diff
 - pnpm build
 + markgate run -- pnpm build
 ```
 
-Drop the same line into the hook, and you're done.
+In your Claude Code `PreToolUse` hook on `git commit*`:
 
-### 2. Non-command enforcement: the hook can't run the task itself
+```diff
+// .claude/settings.json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git commit*)",
+        "hooks": [
+-         { "type": "command", "command": "pnpm build" }
++         { "type": "command", "command": "markgate run -- pnpm build" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+For other hook managers (husky, lefthook, pre-commit framework), the
+shape is identical — see [Drop into your hook manager](#drop-into-your-hook-manager).
+
+### Pattern 2: enforce non-command tasks (`set` + `verify`)
 
 Some tasks aren't commands. "Are these docs still consistent with
 the code?" "Did a reviewer sign off on this diff?" An LLM can judge
@@ -68,14 +90,14 @@ it can **refuse to proceed unless the marker confirms it ran**.
 Adoption is one line on each side:
 
 ```sh
-# At the check site (skill body, sign-off script, ...):
+# At the end of /check-docs (Claude Code skill body, sign-off script, ...):
 markgate set
 
-# In the hook:
+# In a pre-commit hook (.claude/settings.json, PreToolUse on git commit*):
 markgate verify || { echo "Run /check-docs before committing." >&2; exit 1; }
 ```
 
-### 3. Scope leak: tasks fire when unrelated files change, and the hook grows with each new task
+### Pattern 3: scope each task to its files, aggregate the verdict (`.markgate.yml` + `composes`)
 
 As tasks accumulate — code check on `src/**`, docs review on
 `docs/**`, vuln scan on `package-lock.json` — you want each one to
@@ -118,6 +140,15 @@ pnpm build && markgate set check
 # One verify in the hook covers both:
 markgate verify pre-commit || { markgate status pre-commit >&2; exit 1; }
 ```
+
+`markgate run` can't write an aggregate gate: `run` executes a single
+command, and an aggregate gate has none. **Aggregate verify is
+split-only.**
+
+See [Use case 5](#5-pre-commit-collapse-multiple-scoped-gates-into-one-verify-composes)
+for the invalidation matrix and a real-world wire-up, and
+[Gate dependencies](#gate-dependencies-composes-vs-requires) for the
+strict variant (`requires`) that refuses `set` on a stale child.
 
 ## Install
 
@@ -164,111 +195,6 @@ go install github.com/go-to-k/markgate/cmd/markgate@latest
 
 Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
 [GitHub Releases](https://github.com/go-to-k/markgate/releases).
-
-## Setup
-
-For each of the three patterns from [Why this exists](#why-this-exists),
-here's the minimum shape to wire it up. Pick the pattern that matches
-your problem; the patterns are independent.
-
-### Pattern 1: skip duplicate runs (`markgate run`)
-
-Prefix the check command with `markgate run --` in **both** the place
-that runs it and the hook that enforces it — the same one line goes
-in both spots.
-
-In your check site (a `/check` skill, build script, Make target, …):
-
-```diff
-- pnpm build
-+ markgate run -- pnpm build
-```
-
-In your Claude Code `PreToolUse` hook on `git commit*`:
-
-```diff
-// .claude/settings.json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "if": "Bash(git commit*)",
-        "hooks": [
--         { "type": "command", "command": "pnpm build" }
-+         { "type": "command", "command": "markgate run -- pnpm build" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-For other hook managers (husky, lefthook, pre-commit framework), the
-shape is identical — see [Drop into your hook manager](#drop-into-your-hook-manager).
-
-### Pattern 2: enforce non-command tasks (`set` + `verify`)
-
-Hooks can only execute commands, so on their own they enforce only
-**mechanical** tasks (lint, tests, build). Anything else — an LLM
-judgment ("are these docs still in sync with what the code does?")
-or a manual sign-off — can't be reduced to a command. Without
-markgate, hooks have no way to gate on these.
-
-markgate gives the hook a grip. The skill that performs the task
-ends in `markgate set`; the hook runs `markgate verify`. When the
-agent forgets to run the skill, the marker is missing or stale,
-the hook blocks, and the agent is pointed back at the skill.
-
-```sh
-# At the end of /check-docs (Claude Code skill body):
-markgate set
-
-# In a pre-commit hook (.claude/settings.json, PreToolUse on git commit*):
-markgate verify || { echo "Run /check-docs before committing." >&2; exit 1; }
-```
-
-### Pattern 3: scope each task to its files, aggregate the verdict (`.markgate.yml` + `composes`)
-
-When tasks accumulate, drop a `.markgate.yml` at the repo root
-(`markgate init` writes one). Two primitives stack:
-
-- **Scoped gates** — each task gets its own `hash: files` +
-  `include` globs, so it fires only when its own files change
-- **Composes** — a parent gate ANDs the freshness of its children,
-  so the hook calls one `verify` regardless of how many tasks
-
-```yaml
-# .markgate.yml
-gates:
-  check:
-    hash: files
-    include: ["src/**", "tests/**"]
-  docs:
-    hash: files
-    include: ["src/**", "docs/**", "README.md"]
-
-  pre-commit:
-    composes: [check, docs]
-```
-
-```sh
-# Each task freshens its own marker as it finishes:
-pnpm typecheck && pnpm lint && pnpm build && markgate set check
-./scripts/check-docs && markgate set docs
-
-# One verify in the pre-commit hook covers both:
-markgate verify pre-commit || { markgate status pre-commit >&2; exit 1; }
-```
-
-`markgate run` can't write an aggregate gate: `run` executes a single
-command, and an aggregate gate has none. **Aggregate verify is
-split-only.**
-
-See [Use case 5](#5-pre-commit-collapse-multiple-scoped-gates-into-one-verify-composes)
-for the invalidation matrix and a real-world wire-up, and
-[Gate dependencies](#gate-dependencies-composes-vs-requires) for the
-strict variant (`requires`) that refuses `set` on a stale child.
 
 ## How it works
 
@@ -398,7 +324,7 @@ examples below use scoped `files`-hash gates defined in
 [`.markgate.yml`](#markgateyml-reference) at the repo root, and the
 [`set` + `verify` shape](#pattern-2-enforce-non-command-tasks-set--verify)
 above. (For the broad whole-repo `git-tree` shape with no config,
-see [Pattern 1](#pattern-1-skip-duplicate-runs-markgate-run).)
+see [Pattern 1](#pattern-1-ensure-non-duplicate-runs-markgate-run).)
 
 ### 1. Pre-PR: docs consistency
 
