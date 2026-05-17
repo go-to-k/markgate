@@ -2,8 +2,8 @@
 
 `markgate` is the enforcement layer between an AI coding agent and
 its hooks — ensure **non-duplicate runs**, enforce **non-command
-tasks** (LLM review, manual sign-off), and aggregate **multi-task
-verdicts** into one.
+tasks** (LLM review, etc.), and aggregate **multi-task verdicts**
+into one.
 
 ## What markgate does
 
@@ -72,18 +72,19 @@ shape is identical — see [Drop into your hook manager](#drop-into-your-hook-ma
 
 ### Pattern 2: enforce non-command tasks (`set` + `verify`)
 
-Some tasks aren't commands. "Are these docs still consistent with
-the code?" "Did a reviewer sign off on this diff?" An LLM can judge
-them; a human can sign them off — a hook can't execute either. So
-even when the agent is supposed to do the task, the hook has no
-grip on whether it actually happened.
+Some tasks aren't commands. "Did `/check-docs` find docs out of
+sync with src?" "Did `/scan-aws` find any orphan resources?" An
+LLM-led skill can work through these — judging, investigating, or
+updating step by step — but a hook can't execute any of it. So even
+when the agent is supposed to do the task, the hook has no grip on
+whether it actually happened.
 
 `markgate set` + `markgate verify` give the hook a grip by splitting
-the run. The task — wherever it naturally lives, like a
-`/check-docs` skill or a manual sign-off script — ends with
-`markgate set` to record the pass. The hook calls `markgate verify`
-to read the marker. The hook still can't run the task itself, but
-it can **refuse to proceed unless the marker confirms it ran**.
+the run. The skill — wherever it naturally lives, like `/check-docs`,
+`/scan-aws`, or any agent-driven step — ends with `markgate set` to
+record the pass. The hook calls `markgate verify` to read the marker.
+The hook still can't run the skill itself, but it can **refuse to
+proceed unless the marker confirms it ran**.
 
 ![set drops a marker; verify reads it](docs/images/markgate-set-verify.png)
 
