@@ -477,7 +477,7 @@ In your `/check` skill: `pnpm build && markgate set`. See
 [Pattern 2](#pattern-2-enforce-non-command-tasks-set--verify) for the
 full flow.
 
-## Setting up `.markgate.yml`
+## `.markgate.yml` reference
 
 Lives at `$(git rev-parse --show-toplevel)/.markgate.yml` (no
 parent-dir walking).
@@ -492,15 +492,6 @@ markgate init --force  # overwrite an existing one
 The generated file enables the `default` gate with `git-tree` hash,
 plus commented-out examples (an `exclude` list on `git-tree` and a
 `files`-type gate) — uncomment what you need.
-
-Each gate picks a `hash` strategy: **`git-tree`** (default;
-re-verify on any repo change — broad gates like a pre-commit
-lint/test/build) or **`files`** (re-verify only when listed paths
-change — narrow gates for docs, vuln scan on a lockfile, coverage
-for a sub-tree). The full field list and the strategy comparison
-live in [`.markgate.yml` reference](#markgateyml-reference) below.
-
-## `.markgate.yml` reference
 
 Per-gate fields:
 
