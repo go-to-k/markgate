@@ -88,9 +88,11 @@ which writes a small **marker** recording the pass. The hook calls
 itself, but it can **refuse to proceed unless the marker confirms it
 ran**.
 
-The marker is keyed to the current repo state, so a code edit
-after `set` invalidates it — the skill has to run again before
-the hook lets through.
+Code keeps moving after the first `/check-docs`. The agent runs
+the skill, the marker passes — but if the code is edited again
+and the agent forgets to re-run, the marker is already stale (it's
+keyed to the current repo state). The hook blocks until
+`/check-docs` runs against the new state.
 
 ![set drops a marker; verify reads it](docs/images/markgate-set-verify.png)
 
