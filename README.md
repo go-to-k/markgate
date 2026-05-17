@@ -91,7 +91,7 @@ ran**.
 The agent implements, runs `/check-docs`, the marker passes. But
 after another code edit, you'd want `/check-docs` to run again —
 and if the agent forgets, the marker no longer matches the new
-code, so the hook blocks until `/check-docs` re-runs.
+code, so the hook blocks until `/check-docs` runs again.
 
 ![set drops a marker; verify reads it](docs/images/markgate-set-verify.png)
 
