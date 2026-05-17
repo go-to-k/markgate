@@ -110,12 +110,12 @@ hook re-fires tasks that nothing relevant moved. And lining up N
 `markgate verify` calls in the hook clutters the config in
 proportion to how many tasks you add.
 
-With `.markgate.yml`, each task gets its own **scoped gate** (its
-own `include` globs), and the hook verifies a **parent gate** that
-ANDs them all via `composes:`. The code check fires when `src/**`
-moves; the docs review fires when `docs/**` moves. Edits outside
-every scope (CI config, editor settings) invalidate nothing — the
-hook stays silent.
+With `.markgate.yml` (created by `markgate init`), each task gets
+its own **scoped gate** (its own `include` globs), and the hook
+verifies a **parent gate** that ANDs them all via `composes:`. The
+code check fires when `src/**` moves; the docs review fires when
+`docs/**` moves. Edits outside every scope (CI config, editor
+settings) invalidate nothing — the hook stays silent.
 
 ```yaml
 # .markgate.yml
