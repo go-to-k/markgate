@@ -7,12 +7,13 @@ enforce **non-command tasks** (e.g., LLM review), and aggregate
 
 ## What markgate does
 
-Hooks have three failure modes when you want an AI coding agent to
-reliably run a required task — a check (lint, test, build), an
-LLM-judged review, a code-generation step, or any operation with a
-pass/fail outcome. markgate addresses each with one of two primitives
-— `markgate run` (one-shot) or `markgate set` + `markgate verify`
-(the Gate pattern).
+Coding agents forget — context loss, token pressure, hurry. Hooks
+help, but have three failure modes when you want an AI coding
+agent to reliably run a required task — a check (lint, test,
+build), an LLM-judged review, a code-generation step, or any
+operation with a pass/fail outcome. markgate addresses each with
+one of two primitives — `markgate run` (one-shot) or `markgate
+set` + `markgate verify` (the Gate pattern).
 
 ### Pattern 1: ensure non-duplicate runs (`markgate run`)
 
@@ -75,8 +76,8 @@ shape is identical — see [Drop into your hook manager](#drop-into-your-hook-ma
 Some tasks aren't commands. "Did `/check-docs` find docs out of
 sync with src?" "Did `/investigate-aws` find anything wrong?" An
 LLM-led skill can work through these — judging, investigating, or
-updating step by step — but a hook can't execute any of it. So even
-when the agent is supposed to do the task, the hook has no grip on
+updating step by step — but a hook can't execute any of it. So when
+the agent forgets or skips the task, the hook has no grip on
 whether it actually happened.
 
 `markgate set` + `markgate verify` give the hook a grip by splitting
@@ -86,6 +87,10 @@ which writes a small **marker** recording the pass. The hook calls
 `markgate verify` to read it. The hook still can't run the skill
 itself, but it can **refuse to proceed unless the marker confirms it
 ran**.
+
+The marker is keyed to the current repo state, so a code edit
+after `set` invalidates it — the skill has to run again before
+the hook lets through.
 
 ![set drops a marker; verify reads it](docs/images/markgate-set-verify.png)
 
