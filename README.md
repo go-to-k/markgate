@@ -73,7 +73,7 @@ shape is identical — see [Drop into your hook manager](#drop-into-your-hook-ma
 ### Pattern 2: enforce non-command tasks (`set` + `verify`)
 
 Some tasks aren't commands. "Did `/check-docs` find docs out of
-sync with src?" "Did `/scan-aws` find any orphan resources?" An
+sync with src?" "Did `/investigate-aws` find anything wrong?" An
 LLM-led skill can work through these — judging, investigating, or
 updating step by step — but a hook can't execute any of it. So even
 when the agent is supposed to do the task, the hook has no grip on
@@ -81,7 +81,7 @@ whether it actually happened.
 
 `markgate set` + `markgate verify` give the hook a grip by splitting
 the run. The skill — wherever it naturally lives, like `/check-docs`,
-`/scan-aws`, or any agent-driven step — ends with `markgate set` to
+`/investigate-aws`, or any agent-driven step — ends with `markgate set` to
 record the pass. The hook calls `markgate verify` to read the marker.
 The hook still can't run the skill itself, but it can **refuse to
 proceed unless the marker confirms it ran**.
