@@ -1,11 +1,20 @@
 # markgate
 
-A zero-config verification-state cache for hook managers (Claude
-Code, husky, lefthook, pre-commit, bare `.git/hooks/*`) that fires
-the hook **only when your AI coding agent forgot to run the check
-itself** — duplicate runs exit in milliseconds.
+`markgate` is the mechanical enforcement layer between an AI
+coding agent and its hooks — ensure **non-duplicate runs**,
+enforce **non-command tasks** (e.g., LLM review), and aggregate
+**multi-task verdicts** into one.
 
-## Why this exists
+## What markgate does
+
+Hooks have three failure modes when you want an AI coding agent to
+reliably run a required task — a check (lint, test, build), an
+LLM-judged review, a code-generation step, or any operation with a
+pass/fail outcome. markgate addresses each with one of two primitives
+— `markgate run` (one-shot) or `markgate set` + `markgate verify`
+(the Gate pattern).
+
+### Pattern 1: ensure non-duplicate runs (`markgate run`)
 
 You tell your coding agent to run `/check` (test, lint, build, doc
 consistency) before committing. **Sometimes it forgets** — context
@@ -17,81 +26,21 @@ So you add a pre-commit hook to enforce the check. Now every commit
 runs the check twice, once by the agent, once by the hook. Heavy
 checks slow the dev loop; light ones still add up.
 
-![Skill and hook double-run the check](docs/images/duplicate-execution.png)
+![Agent and hook double-run the check](docs/images/duplicate-execution.png)
 
 Pulling the check out of the agent and leaving it only in the hook
 isn't the answer — you can't run it before you're ready to commit.
-Per-edit hooks aren't either — they pay the cost on every keystroke.
+Per-edit hooks aren't either — they pay the cost on every edit.
 
-`markgate` resolves the dilemma: keeping both the check site and
-the hook in place, **the hook fires only when the agent forgets**.
-When the agent ran the check properly, **the hook is skipped** — no
-duplicate execution.
+`markgate run` resolves the dilemma: keeping both the check site and
+the hook in place, **the hook re-runs the check only when the agent
+forgot**. When the agent ran the check properly, **the hook becomes
+a near-instant no-op** — no duplicate execution.
 
-![markgate fires the hook only when the agent forgot](docs/images/markgate-resolves.png)
+![markgate run fires the hook only when the agent forgot](docs/images/markgate-resolves.png)
 
-Adoption is one line — prefix your check command:
-
-```diff
-- pnpm build
-+ markgate run -- pnpm build
-```
-
-Drop the same line into the hook, and you're done.
-
-## Install
-
-> **Note:** `markgate` is meant to run inside a git repository.
-
-### Homebrew (macOS / Linux)
-
-```sh
-brew install go-to-k/tap/markgate
-```
-
-### Shell script (macOS / Linux / Windows with Git Bash)
-
-```sh
-# Latest
-curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash
-
-# Pin a version
-curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash -s -- v0.1.0
-```
-
-### mise
-
-Pin a version per repo via [`.mise.toml`](https://mise.jdx.dev/configuration.html):
-
-```toml
-[tools]
-"ubi:go-to-k/markgate" = "0.2.0"
-```
-
-Or one-shot:
-
-```sh
-mise use "ubi:go-to-k/markgate@0.2.0"
-```
-
-### `go install`
-
-```sh
-go install github.com/go-to-k/markgate/cmd/markgate@latest
-```
-
-### Prebuilt binaries
-
-Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
-[GitHub Releases](https://github.com/go-to-k/markgate/releases).
-
-## Basic setup
-
-The simplest shape: prefix the check command with `markgate run --`
-in **both** the place that runs it and the hook that enforces it —
-the same one line goes in both spots.
-
-In your check site (a `/check` skill, build script, Make target, …):
+Adoption is one line — prefix your check command in **both** the place
+that runs it and the hook that enforces it:
 
 ```diff
 - pnpm build
@@ -118,59 +67,55 @@ In your Claude Code `PreToolUse` hook on `git commit*`:
 }
 ```
 
-**That's it.** When the agent already ran the check, the hook is
-skipped — duplicate runs exit in milliseconds. When the agent
-forgets, the hook runs `pnpm build` itself before the commit goes
-through. Either way, `pnpm build` runs at most once per repo state.
-
 For other hook managers (husky, lefthook, pre-commit framework), the
 shape is identical — see [Drop into your hook manager](#drop-into-your-hook-manager).
 
-The shape above is the simplest: one check, one hook, one command.
-As your check setup grows — multiple checks, an aggregate verdict,
-or a check that doesn't fit in a shell command — reach for the split
-form [`set` + `verify`](#gate-pattern-set--verify) instead.
+### Pattern 2: enforce non-command tasks (`set` + `verify`)
 
-## Gate pattern: `set` + `verify`
+Some tasks aren't commands. "Did `/check-docs` find docs out of
+sync with src?" "Did `/investigate-aws` find anything wrong?" An
+LLM-led skill can work through these — judging, investigating, or
+updating step by step — but a hook can't execute any of it. So even
+when the agent is supposed to do the task, the hook has no grip on
+whether it actually happened.
 
-`markgate run -- <cmd>` bakes the check into the hook. The split
-form inverts it: the check sets its own marker where it lives —
-capturing the code state at the moment it passed — and the hook
-just verifies the marker. If the code hasn't changed since then,
-the marker still matches and `verify` exits 0; if it has, the
-marker diverges and `verify` exits 1. (Mechanics — how the hash is
-computed, where the file lives — are in [How it works](#how-it-works)
-below; for now the "pass receipt" picture is enough.) Zero-config
-at minimum, scales with `.markgate.yml`.
+`markgate set` + `markgate verify` give the hook a grip by splitting
+the run. The skill — wherever it naturally lives, like `/check-docs`,
+`/investigate-aws`, or any agent-driven step — ends with `markgate set`,
+which writes a small **marker** recording the pass. The hook calls
+`markgate verify` to read it. The hook still can't run the skill
+itself, but it can **refuse to proceed unless the marker confirms it
+ran**.
 
-The two halves:
+![set drops a marker; verify reads it](docs/images/markgate-set-verify.png)
 
-- `markgate set` — record the moment the check passed as a marker
-- `markgate verify` — exit 0 if the code hasn't changed since the
-  marker was recorded, 1 if it has
-
-### Minimum shape (zero-config)
+Adoption is one line on each side:
 
 ```sh
-# Wherever the check actually runs (skill, build script, Make target):
-pnpm typecheck && pnpm lint:fix && pnpm build && markgate set
+# At the end of /check-docs (or any agent-driven step):
+markgate set
 
-# In the hook — pure verdict, with a hint on failure:
-markgate verify || { echo "Run the check before committing." >&2; exit 1; }
+# In a pre-commit hook (.claude/settings.json, PreToolUse on git commit*):
+markgate verify || { echo "Run /check-docs before committing." >&2; exit 1; }
 ```
 
-The chain stays in one place. The hook doesn't repeat it — it just
-gates on the marker. On a stale marker, the hook exits 1 instead of
-silently re-running the chain itself; the agent sees the block (and
-the hint) and re-runs the check via its proper entry point.
+### Pattern 3: scope each task to its files, aggregate the verdict (`.markgate.yml` + `composes`)
 
-### Where it pays off: aggregate over multiple checks
+As tasks accumulate — code check on `src/**`, docs review on
+`docs/**`, vuln scan on `package-lock.json` — you want each one to
+**fire only when its own files change**. The default whole-repo
+hash doesn't allow that: a code-only edit invalidates the docs
+marker, a docs-only edit invalidates the vuln-scan marker, so the
+hook re-fires tasks that nothing relevant moved. And lining up N
+`markgate verify` calls in the hook clutters the config in
+proportion to how many tasks you add.
 
-As checks accumulate, each one freshens **its own marker** and the
-hook verifies an **aggregate** built from them. The aggregate is a
-parent gate that bundles its children via `composes` — call it an
-**aggregate gate**. It has no command of its own, just the AND of
-its children.
+With `.markgate.yml` (created by `markgate init`), each task gets
+its own **scoped gate** (its own `include` globs), and the hook
+verifies a **parent gate** that ANDs them all via `composes:`. The
+code check fires when `src/**` moves; the docs review fires when
+`docs/**` moves. Edits outside every scope (CI config, editor
+settings) invalidate nothing — the hook stays silent.
 
 ```yaml
 # .markgate.yml
@@ -185,190 +130,33 @@ gates:
     composes: [check, docs]
 ```
 
-```sh
-# Each check freshens its own marker, wherever it lives:
-pnpm build && markgate set check
-./scripts/check-docs && markgate set docs
+Once each task owns its scope, the hook needs **just one verify** —
+when every child is fresh, the parent passes.
 
-# Hook — one call covers both; status names the stale child on failure:
+![Children freshen markers; parent verify ANDs them](docs/images/composes-aggregate.png)
+
+Adoption:
+
+```sh
+# Each task freshens its own marker, wherever it lives:
+pnpm build && markgate set check
+# Inside the /check-docs skill body (LLM-led — see Pattern 2):
+markgate set docs
+
+# One verify in the hook covers both:
 markgate verify pre-commit || { markgate status pre-commit >&2; exit 1; }
 ```
 
-`markgate run` can't write an aggregate gate: `run` executes a
-single command, and an aggregate gate has none. **Aggregate verify
-is split-only.** Full setup, including the invalidation matrix:
-[use case 5](#5-pre-commit-collapse-multiple-scoped-gates-into-one-verify-composes).
+`markgate run` can't write an aggregate gate: `run` executes a single
+command, and an aggregate gate has none. **Aggregate verify is
+split-only.**
 
-### When to reach for the split form
-
-- **Aggregate verify over multiple checks** — see above; the hook
-  stays one line as the check set grows
-- **The check can't be reduced to a shell command** — LLM-judged
-  review, manual sign-off. See [Enforcing AI checks that aren't
-  commands](#enforcing-ai-checks-that-arent-commands)
-- **Block, or run the work instead?** — `markgate run` covers for
-  the agent by running the check itself when it's forgotten;
-  `verify` blocks at the gate so the agent gets a "you forgot"
-  signal and re-runs. Pick the behavior you want
-
-If your hook is happy to be the fallback that runs a single check
-when the agent forgets, `markgate run --` is the shorter spelling.
-Reach for `markgate set` + `markgate verify` when checks live in
-their natural places and the hook is a verdict, not a backstop.
-
-## How it works
-
-When `markgate run -- <cmd>` is invoked:
-
-1. It computes a **hash** of the current repo state.
-2. If a saved marker matches, `<cmd>` is skipped (exit 0
-   immediately).
-3. Otherwise `<cmd>` runs. On success, the hash is saved as the new
-   marker. On failure, the marker is left untouched.
-
-(For the split shape, `markgate set` writes step 3's marker;
-`markgate verify` does step 2's match check.)
-
-```sh
-# First run — nothing cached yet, so `pnpm build` runs and the pass is cached.
-$ markgate run -- pnpm build
-building...
-passed in 7.2s
-
-# Second run — nothing changed since the last success: instant skip.
-$ markgate run -- pnpm build
-
-# After you edit a file — cache is stale, `pnpm build` runs again.
-$ echo '// fix typo' >> src/foo.ts
-$ markgate run -- pnpm build
-building...
-passed in 7.1s
-```
-
-The marker is a small JSON file under `.git/markgate/`, one per
-gate (the file name matches the gate name, e.g. `default.json`).
-Not committed, not tracked, isolated per worktree. With
-`--state-dir <dir>`, `MARKGATE_STATE_DIR=<dir>`, or `state_dir:`
-in `.markgate.yml`, markers go to `<dir>/` instead — see [Sharing
-markers](#sharing-markers-across-machines-ci--teammates). The
-on-disk JSON layout is an implementation detail; don't parse it.
-
-## Enforcing AI checks that aren't commands
-
-Hooks can only execute commands, so on their own they enforce only **mechanical** checks (lint, tests, build). Reviews that need AI judgment — docs consistency with src, naming consistency with existing symbols, "does the PR description match the diff?" — can't be reduced to a command. The mechanical layer can spot a typo or a bad import, but "are these docs still in sync with what the code does?" isn't a regex. Without markgate, hooks can't gate on these.
-
-markgate gives the hook a grip. The AI skill that performs the review ends in `markgate set`; the hook runs `markgate verify`. When the agent forgets the skill, the marker is stale, the hook blocks, and the agent is pointed back at the skill.
-
-```sh
-# At the end of /check-docs (Claude Code skill body):
-markgate set
-
-# In a pre-commit hook (.claude/settings.json, PreToolUse on git commit*):
-markgate verify || { echo "Run /check-docs before committing." >&2; exit 1; }
-```
-
-Why the agent can't trivially bypass it: `markgate set` lives at the end of the skill body, so an agent told to run `/check-docs` would have to skip the skill *and* call `markgate set` directly — more work than just running the skill. The skill is the discipline; the hook is the enforcement.
-
-To narrow the trigger so the marker invalidates only when specific files change — e.g. re-judge docs only when `docs/**` or `src/**` move — see [Scoped gates](#scoped-gates) below.
-
-## Scoped gates
-
-`markgate` works zero-config — what [Basic setup](#basic-setup)
-shows covers most pre-commit cases. When you want finer control,
-drop a `.markgate.yml` at the repo root (`markgate init` writes
-one):
-
-- **Targeted files** — limit a gate to a specific set of files via
-  [`hash: files`](#hashing-strategies-git-tree-vs-files) + `include`
-  globs, so unrelated commits don't invalidate the marker
-- **Multiple gates** — define independent named gates in one repo,
-  each tracking its own scope (e.g. one for pre-commit, one for
-  pre-PR)
-
-Combined, these give you **scoped gates**: "re-run this check only
-when these files change."
-
-### `.markgate.yml`
-
-Lives at `$(git rev-parse --show-toplevel)/.markgate.yml` (no
-parent-dir walking).
-
-`markgate init` writes a starter file at the repo root:
-
-```sh
-markgate init          # writes .markgate.yml at the repo root
-markgate init --force  # overwrite an existing one
-```
-
-The generated file enables the `default` gate with `git-tree` hash,
-plus commented-out examples (an `exclude` list on `git-tree` and a
-`files`-type gate) — uncomment what you need.
-
-Per-gate fields:
-
-| field | purpose |
-| --- | --- |
-| `hash` | `git-tree` (default) or `files` |
-| `include` | glob list; required for `hash: files` |
-| `exclude` | glob list |
-| `state_dir` | optional override of marker storage location — see [Sharing markers](#sharing-markers-across-machines-ci--teammates) |
-| `ttl` | optional wall-clock expiry for the marker — see [Wall-clock expiry (`ttl`)](#wall-clock-expiry-ttl) |
-| `composes` | child gate keys whose freshness is ANDed into this one — see [Gate dependencies](#gate-dependencies-composes-vs-requires) |
-| `requires` | like `composes`, but `set` of this gate is refused unless every required child is fresh — see [Gate dependencies](#gate-dependencies-composes-vs-requires) |
-
-Example:
-
-```yaml
-gates:
-  default:
-    hash: git-tree
-    exclude:
-      - "vendor/**"
-      - "node_modules/**"
-
-  pre-pr:
-    hash: files
-    include:
-      - "docs/**"
-      - "README.md"
-    exclude:
-      - "**/*.txt"
-```
-
-Each gate's key (the YAML map key — `default`, `pre-pr` above) must
-match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII). `default` is what
-`markgate set` / `verify` use when no key argument is given:
-
-```sh
-markgate set               # same as `markgate set default`
-markgate set pre-pr        # a second, independent gate
-```
-
-### Hashing strategies: `git-tree` vs `files`
-
-The `hash` field above picks one of two strategies:
-
-| aspect | `git-tree` (default) | `files` |
-| --- | --- | --- |
-| What it hashes | `HEAD` + diff-vs-HEAD ∪ untracked-not-ignored | whatever matches your `include` globs |
-| `HEAD` in the hash? | **Yes** | **No** |
-| Commits invalidate the marker? | Yes | Only if they touch in-scope files |
-| `.gitignore` respected? | Yes (automatic) | No — scope is explicit |
-| Needs config? | No | Yes (`include` required) |
-
-When to use which:
-
-- **`git-tree`** = "re-verify on *any* repo change". Broad gates
-  (pre-commit running lint/test/build). Add `exclude` patterns to
-  skip `vendor/`, `node_modules/`, etc. — HEAD-aware invalidation
-  is kept.
-- **`files`** = "re-verify *only* when these paths change, ignore
-  other commits". Narrow gates (docs consistency, vuln scan rooted
-  on a lockfile, coverage for one sub-tree).
-
-Rule of thumb: start with `git-tree` (add `exclude` if needed).
-Reach for `files` only when you specifically want the "ignore
-commits that don't touch these paths" semantics.
+See [Use case 4](#4-pre-commit-isolate-a-slow-check-with-its-own-scoped-gate)
+for the invalidation matrix and a real-world wire-up,
+[Use case 5](#5-pre-commit-collapse-multiple-scoped-gates-into-one-verify-composes)
+for the aggregate `composes` shape on top of it, and
+[Gate dependencies](#gate-dependencies-composes-vs-requires) for the
+strict variant (`requires`) that refuses `set` on a stale child.
 
 ## Use cases
 
@@ -376,10 +164,10 @@ Each section follows the same shape: **Scope** (what triggers
 re-verify — a [`hash`](#hashing-strategies-git-tree-vs-files)
 strategy) → **Commands** (what goes in your shell / hook). All
 examples below use scoped `files`-hash gates defined in
-[`.markgate.yml`](#markgateyml) at the repo root, and the
-[Gate pattern](#gate-pattern-set--verify) shape above. (For the
-broad whole-repo `git-tree` shape with no config, see
-[Basic setup](#basic-setup).)
+[`.markgate.yml`](#markgateyml-reference) at the repo root, and the
+[`set` + `verify` shape](#pattern-2-enforce-non-command-tasks-set--verify)
+above. (For the broad whole-repo `git-tree` shape with no config,
+see [Pattern 1](#pattern-1-ensure-non-duplicate-runs-markgate-run).)
 
 ### 1. Pre-PR: docs consistency
 
@@ -399,7 +187,8 @@ gates:
 **Commands**:
 
 ```sh
-./scripts/check-docs && markgate set pre-pr
+# Inside the /check-docs skill body (LLM-led — see Pattern 2):
+markgate set pre-pr
 
 # Before `gh pr create`:
 markgate verify pre-pr || {
@@ -494,8 +283,9 @@ The last row is what makes the idiom scale: edits that land in neither `include`
 # Fast code check (src / tests / config):
 pnpm typecheck && pnpm lint && pnpm build && markgate set check
 
-# Slow docs consistency check (src / docs / README):
-./scripts/check-docs && markgate set docs
+# Slow docs consistency check (src / docs / README) — inside the /check-docs
+# skill body (LLM-led — see Pattern 2):
+markgate set docs
 
 # One pre-commit hook verifies both; the failing gate names itself:
 markgate verify check || { echo "run the code check" >&2; exit 1; }
@@ -539,7 +329,8 @@ gates:
 ```sh
 # Each child is set as its own check finishes (same as use case 4):
 pnpm typecheck && pnpm lint && pnpm build && markgate set check
-./scripts/check-docs && markgate set docs
+# Inside the /check-docs skill body (LLM-led — see Pattern 2):
+markgate set docs
 
 # One verify covers both:
 markgate verify pre-commit || {
@@ -552,11 +343,231 @@ markgate verify pre-commit || {
 
 **Strict variant (`requires`)** — same `verify` propagation, but `markgate set <parent>` is refused (exit 2) when any child is stale, and the error names the offending child. Reach for it when the parent represents an action that *must not happen* before its children pass — `deploy` requiring a fresh `migration` gate, `release` requiring a fresh `e2e` gate. See [Gate dependencies](#gate-dependencies-composes-vs-requires) for the full shape.
 
-## Advanced configuration
+## How it works
 
-Optional features layered on top of the core `.markgate.yml` shape.
-Skip this section unless you hit one of the use cases below; the
-basic gate pattern works without either of them.
+When `markgate run -- <cmd>` is invoked:
+
+1. It computes a **hash** of the current repo state.
+2. If a saved marker matches, `<cmd>` is skipped (exit 0
+   immediately).
+3. Otherwise `<cmd>` runs. On success, the hash is saved as the new
+   marker. On failure, the marker is left untouched.
+
+(For the split shape, `markgate set` writes step 3's marker;
+`markgate verify` does step 2's match check.)
+
+```sh
+# First run — nothing cached yet, so `pnpm build` runs and the pass is cached.
+$ markgate run -- pnpm build
+building...
+passed in 7.2s
+
+# Second run — nothing changed since the last success: instant skip.
+$ markgate run -- pnpm build
+
+# After you edit a file — cache is stale, `pnpm build` runs again.
+$ echo '// fix typo' >> src/foo.ts
+$ markgate run -- pnpm build
+building...
+passed in 7.1s
+```
+
+The marker is a small JSON file under `.git/markgate/`, one per
+gate (the file name matches the gate name, e.g. `default.json`).
+Not committed, not tracked, isolated per worktree. With
+`--state-dir <dir>`, `MARKGATE_STATE_DIR=<dir>`, or `state_dir:`
+in `.markgate.yml`, markers go to `<dir>/` instead — see [Sharing
+markers](#sharing-markers-across-machines-ci--teammates). The
+on-disk JSON layout is an implementation detail; don't parse it.
+
+## Install
+
+> **Note:** `markgate` is meant to run inside a git repository.
+
+### Homebrew (macOS / Linux)
+
+```sh
+brew install go-to-k/tap/markgate
+```
+
+### Shell script (macOS / Linux / Windows with Git Bash)
+
+```sh
+# Latest
+curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash
+
+# Pin a version
+curl -fsSL https://raw.githubusercontent.com/go-to-k/markgate/main/install.sh | bash -s -- v0.1.0
+```
+
+### mise
+
+Pin a version per repo via [`.mise.toml`](https://mise.jdx.dev/configuration.html):
+
+```toml
+[tools]
+"ubi:go-to-k/markgate" = "0.2.0"
+```
+
+Or one-shot:
+
+```sh
+mise use "ubi:go-to-k/markgate@0.2.0"
+```
+
+### `go install`
+
+```sh
+go install github.com/go-to-k/markgate/cmd/markgate@latest
+```
+
+### Prebuilt binaries
+
+Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
+[GitHub Releases](https://github.com/go-to-k/markgate/releases).
+
+## Drop into your hook manager
+
+Substitute `pnpm build` with your verification command. Use
+`markgate run --` when the hook itself runs the check, or
+`markgate verify` when it sits in front of a separate `markgate set`
+(see [Pattern 2](#pattern-2-enforce-non-command-tasks-set--verify)).
+
+**husky** — `.husky/pre-commit`:
+
+```sh
+markgate run -- pnpm build
+```
+
+**lefthook** — `lefthook.yml`:
+
+```yaml
+pre-commit:
+  commands:
+    check:
+      run: markgate run -- pnpm build
+```
+
+**pre-commit framework** — `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: markgate-check
+        name: markgate check
+        entry: markgate run -- pnpm build
+        language: system
+        pass_filenames: false
+```
+
+**Claude Code (PreToolUse)** — `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git commit*)",
+        "hooks": [
+          { "type": "command", "command": "markgate verify" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+In your `/check` skill: `pnpm build && markgate set`. See
+[Pattern 2](#pattern-2-enforce-non-command-tasks-set--verify) for the
+full flow.
+
+## `.markgate.yml` reference
+
+Lives at `$(git rev-parse --show-toplevel)/.markgate.yml` (no
+parent-dir walking).
+
+`markgate init` writes a starter file at the repo root:
+
+```sh
+markgate init          # writes .markgate.yml at the repo root
+markgate init --force  # overwrite an existing one
+```
+
+The generated file enables the `default` gate with `git-tree` hash,
+plus commented-out examples (an `exclude` list on `git-tree` and a
+`files`-type gate) — uncomment what you need.
+
+Per-gate fields:
+
+| field | purpose |
+| --- | --- |
+| `hash` | `git-tree` (default) or `files` |
+| `include` | glob list; required for `hash: files` |
+| `exclude` | glob list |
+| `state_dir` | optional override of marker storage location — see [Sharing markers](#sharing-markers-across-machines-ci--teammates) |
+| `ttl` | optional wall-clock expiry for the marker — see [Wall-clock expiry (`ttl`)](#wall-clock-expiry-ttl) |
+| `composes` | child gate keys whose freshness is ANDed into this one — see [Gate dependencies](#gate-dependencies-composes-vs-requires) |
+| `requires` | like `composes`, but `set` of this gate is refused unless every required child is fresh — see [Gate dependencies](#gate-dependencies-composes-vs-requires) |
+
+Example:
+
+```yaml
+gates:
+  default:
+    hash: git-tree
+    exclude:
+      - "vendor/**"
+      - "node_modules/**"
+
+  pre-pr:
+    hash: files
+    include:
+      - "docs/**"
+      - "README.md"
+    exclude:
+      - "**/*.txt"
+```
+
+Each gate's key (the YAML map key — `default`, `pre-pr` above) must
+match `[a-z0-9][a-z0-9-]*` (kebab-case ASCII). `default` is what
+`markgate set` / `verify` use when no key argument is given:
+
+```sh
+markgate set               # same as `markgate set default`
+markgate set pre-pr        # a second, independent gate
+```
+
+### Hashing strategies: `git-tree` vs `files`
+
+The `hash` field above picks one of two strategies:
+
+| aspect | `git-tree` (default) | `files` |
+| --- | --- | --- |
+| What it hashes | `HEAD` + diff-vs-HEAD ∪ untracked-not-ignored | whatever matches your `include` globs |
+| `HEAD` in the hash? | **Yes** | **No** |
+| Commits invalidate the marker? | Yes | Only if they touch in-scope files |
+| `.gitignore` respected? | Yes (automatic) | No — scope is explicit |
+| Needs config? | No | Yes (`include` required) |
+
+When to use which:
+
+- **`git-tree`** = "re-verify on *any* repo change". Broad gates
+  (pre-commit running lint/test/build). Add `exclude` patterns to
+  skip `vendor/`, `node_modules/`, etc. — HEAD-aware invalidation
+  is kept.
+- **`files`** = "re-verify *only* when these paths change, ignore
+  other commits". Narrow gates (docs consistency, vuln scan rooted
+  on a lockfile, coverage for one sub-tree).
+
+Rule of thumb: start with `git-tree` (add `exclude` if needed).
+Reach for `files` only when you specifically want the "ignore
+commits that don't touch these paths" semantics.
+
+`ttl`, `composes`, and `requires` are **optional** — the basic
+gate pattern works without them. Skip the rest of this section
+unless you hit one of the patterns above.
 
 ### Wall-clock expiry (`ttl`)
 
@@ -668,94 +679,6 @@ expects.
   doesn't change `set` semantics; you can promote to `requires`
   once you know you want `set` to refuse.
 
-## Drop into your hook manager
-
-Substitute `pnpm build` with your verification command. Use
-`markgate run --` when the hook itself runs the check, or
-`markgate verify` when it sits in front of a separate `markgate set`
-(see [Gate pattern](#gate-pattern-set--verify)).
-
-**husky** — `.husky/pre-commit`:
-
-```sh
-markgate run -- pnpm build
-```
-
-**lefthook** — `lefthook.yml`:
-
-```yaml
-pre-commit:
-  commands:
-    check:
-      run: markgate run -- pnpm build
-```
-
-**pre-commit framework** — `.pre-commit-config.yaml`:
-
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: markgate-check
-        name: markgate check
-        entry: markgate run -- pnpm build
-        language: system
-        pass_filenames: false
-```
-
-**Claude Code (PreToolUse)** — `.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "if": "Bash(git commit*)",
-        "hooks": [
-          { "type": "command", "command": "markgate verify" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-In your `/check` skill: `pnpm build && markgate set`. See
-[Gate pattern](#gate-pattern-set--verify) for the full flow.
-
-## Command model
-
-### `markgate run -- <cmd>` (one-shot)
-
-Collapses verify → run → set into one invocation (see
-[How it works](#how-it-works) for the mechanism). stdio is passed
-through; `SIGINT` / `SIGTERM` are forwarded to `<cmd>`. On `<cmd>`
-failure, the marker is **not** updated and `<cmd>`'s exit code is
-returned as-is.
-
-### `markgate set` / `markgate verify` (split)
-
-The two halves of `run`. See
-[Gate pattern](#gate-pattern-set--verify) for when to use the split
-shape.
-
-```sh
-pnpm build && markgate set    # record state on success
-markgate verify || pnpm build # short-circuit if marker fresh, else re-run
-```
-
-### Exit codes
-
-Exit codes follow the `grep` / `diff` convention, so `||` composes
-naturally:
-
-| exit | meaning                                                   |
-| ---- | --------------------------------------------------------- |
-| 0    | verified — state matches the marker, safe to skip         |
-| 1    | not verified — no marker, state differs, or TTL expired   |
-| 2    | error — not in a repo, bad config, bad key, etc.          |
-
 ## CLI reference
 
 ```text
@@ -779,6 +702,10 @@ markgate version                       Print the version.
 markgate completion <shell>            Emit a completion script (bash / zsh / fish / powershell).
 ```
 
+`markgate run` passes stdio through and forwards `SIGINT` / `SIGTERM`
+to `<cmd>`. On `<cmd>` failure, the marker is **not** updated and
+`<cmd>`'s exit code is returned as-is.
+
 `verify`, `status`, and `run` accept `--explain` / `-e` to print the
 files currently in scope to stderr (with `--json` for a structured
 form on stdout). See [Debugging a stale gate](#debugging-a-stale-gate).
@@ -795,6 +722,17 @@ form on stdout). See [Debugging a stale gate](#debugging-a-stale-gate).
 > stderr) when you want explain output alongside a real run, or
 > compose with `markgate verify <key> --explain --json` ahead of
 > the child.
+
+### Exit codes
+
+Exit codes follow the `grep` / `diff` convention, so `||` composes
+naturally:
+
+| exit | meaning                                                   |
+| ---- | --------------------------------------------------------- |
+| 0    | verified — state matches the marker, safe to skip         |
+| 1    | not verified — no marker, state differs, or TTL expired   |
+| 2    | error — not in a repo, bad config, bad key, etc.          |
 
 ### `markgate status` (bare): list all gates
 
