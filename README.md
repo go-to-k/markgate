@@ -420,6 +420,63 @@ go install github.com/go-to-k/markgate/cmd/markgate@latest
 Linux / macOS / Windows archives (amd64 / arm64 / 386) — see
 [GitHub Releases](https://github.com/go-to-k/markgate/releases).
 
+## Drop into your hook manager
+
+Substitute `pnpm build` with your verification command. Use
+`markgate run --` when the hook itself runs the check, or
+`markgate verify` when it sits in front of a separate `markgate set`
+(see [Pattern 2](#pattern-2-enforce-non-command-tasks-set--verify)).
+
+**husky** — `.husky/pre-commit`:
+
+```sh
+markgate run -- pnpm build
+```
+
+**lefthook** — `lefthook.yml`:
+
+```yaml
+pre-commit:
+  commands:
+    check:
+      run: markgate run -- pnpm build
+```
+
+**pre-commit framework** — `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: markgate-check
+        name: markgate check
+        entry: markgate run -- pnpm build
+        language: system
+        pass_filenames: false
+```
+
+**Claude Code (PreToolUse)** — `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git commit*)",
+        "hooks": [
+          { "type": "command", "command": "markgate verify" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+In your `/check` skill: `pnpm build && markgate set`. See
+[Pattern 2](#pattern-2-enforce-non-command-tasks-set--verify) for the
+full flow.
+
 ## Setting up `.markgate.yml`
 
 Lives at `$(git rev-parse --show-toplevel)/.markgate.yml` (no
@@ -624,63 +681,6 @@ expects.
 - If unsure, start with `composes`. It's the looser of the two and
   doesn't change `set` semantics; you can promote to `requires`
   once you know you want `set` to refuse.
-
-## Drop into your hook manager
-
-Substitute `pnpm build` with your verification command. Use
-`markgate run --` when the hook itself runs the check, or
-`markgate verify` when it sits in front of a separate `markgate set`
-(see [Pattern 2](#pattern-2-enforce-non-command-tasks-set--verify)).
-
-**husky** — `.husky/pre-commit`:
-
-```sh
-markgate run -- pnpm build
-```
-
-**lefthook** — `lefthook.yml`:
-
-```yaml
-pre-commit:
-  commands:
-    check:
-      run: markgate run -- pnpm build
-```
-
-**pre-commit framework** — `.pre-commit-config.yaml`:
-
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: markgate-check
-        name: markgate check
-        entry: markgate run -- pnpm build
-        language: system
-        pass_filenames: false
-```
-
-**Claude Code (PreToolUse)** — `.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "if": "Bash(git commit*)",
-        "hooks": [
-          { "type": "command", "command": "markgate verify" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-In your `/check` skill: `pnpm build && markgate set`. See
-[Pattern 2](#pattern-2-enforce-non-command-tasks-set--verify) for the
-full flow.
 
 ## Command model
 
