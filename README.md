@@ -2,7 +2,7 @@
 
 `markgate` is the enforcement layer between an AI coding agent and
 its hooks — ensure **non-duplicate runs**, enforce **non-command
-tasks** (LLM review, etc.), and aggregate **multi-task verdicts**
+tasks** (e.g., LLM review), and aggregate **multi-task verdicts**
 into one.
 
 ## What markgate does
