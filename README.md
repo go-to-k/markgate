@@ -2,8 +2,8 @@
 
 `markgate` makes hooks for AI coding agents (such as Claude Code)
 skip the duplicate work the agent already ran, gate on **non-command
-tasks** (LLM review, sign-off, code generation), and aggregate
-**multi-task verdicts** into one.
+tasks** (LLM review, manual sign-off), and aggregate **multi-task
+verdicts** into one.
 
 ## Why this exists
 
@@ -51,19 +51,17 @@ Drop the same line into the hook, and you're done.
 ### 2. Non-command enforcement: the hook can't run the task itself
 
 Some tasks aren't commands. "Are these docs still consistent with
-the code?" "Did a reviewer sign off on this diff?" "Have the types
-been regenerated for the latest schema?" An LLM can judge them, a
-human can sign them off, a skill can perform them — a hook can't
-execute any of these. So even when the agent is supposed to do the
-task, the hook has no grip on whether it actually happened.
+the code?" "Did a reviewer sign off on this diff?" An LLM can judge
+them; a human can sign them off — a hook can't execute either. So
+even when the agent is supposed to do the task, the hook has no
+grip on whether it actually happened.
 
 `markgate set` + `markgate verify` give the hook a grip by splitting
 the run. The task — wherever it naturally lives, like a
-`/check-docs` skill, a `/generate-types` step, or a manual sign-off
-script — ends with `markgate set` to record the pass. The hook
-calls `markgate verify` to read the marker. The hook still can't
-run the task itself, but it can **refuse to proceed unless the
-marker confirms it ran**.
+`/check-docs` skill or a manual sign-off script — ends with
+`markgate set` to record the pass. The hook calls `markgate verify`
+to read the marker. The hook still can't run the task itself, but
+it can **refuse to proceed unless the marker confirms it ran**.
 
 ![set drops a marker; verify reads it](docs/images/markgate-set-verify.png)
 
@@ -213,9 +211,8 @@ shape is identical — see [Drop into your hook manager](#drop-into-your-hook-ma
 
 Hooks can only execute commands, so on their own they enforce only
 **mechanical** tasks (lint, tests, build). Anything else — an LLM
-judgment ("are these docs still in sync with what the code does?"),
-a manual sign-off, a skill-driven step like `/generate-types` or
-`/update-changelog` — can't be reduced to a command. Without
+judgment ("are these docs still in sync with what the code does?")
+or a manual sign-off — can't be reduced to a command. Without
 markgate, hooks have no way to gate on these.
 
 markgate gives the hook a grip. The skill that performs the task
