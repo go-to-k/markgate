@@ -673,38 +673,6 @@ expects.
   doesn't change `set` semantics; you can promote to `requires`
   once you know you want `set` to refuse.
 
-## Command model
-
-### `markgate run -- <cmd>` (one-shot)
-
-Collapses verify → run → set into one invocation (see
-[How it works](#how-it-works) for the mechanism). stdio is passed
-through; `SIGINT` / `SIGTERM` are forwarded to `<cmd>`. On `<cmd>`
-failure, the marker is **not** updated and `<cmd>`'s exit code is
-returned as-is.
-
-### `markgate set` / `markgate verify` (split)
-
-The two halves of `run`. See
-[Pattern 2](#pattern-2-enforce-non-command-tasks-set--verify) for
-when to use the split shape.
-
-```sh
-pnpm build && markgate set    # record state on success
-markgate verify || pnpm build # short-circuit if marker fresh, else re-run
-```
-
-### Exit codes
-
-Exit codes follow the `grep` / `diff` convention, so `||` composes
-naturally:
-
-| exit | meaning                                                   |
-| ---- | --------------------------------------------------------- |
-| 0    | verified — state matches the marker, safe to skip         |
-| 1    | not verified — no marker, state differs, or TTL expired   |
-| 2    | error — not in a repo, bad config, bad key, etc.          |
-
 ## CLI reference
 
 ```text
@@ -728,6 +696,10 @@ markgate version                       Print the version.
 markgate completion <shell>            Emit a completion script (bash / zsh / fish / powershell).
 ```
 
+`markgate run` passes stdio through and forwards `SIGINT` / `SIGTERM`
+to `<cmd>`. On `<cmd>` failure, the marker is **not** updated and
+`<cmd>`'s exit code is returned as-is.
+
 `verify`, `status`, and `run` accept `--explain` / `-e` to print the
 files currently in scope to stderr (with `--json` for a structured
 form on stdout). See [Debugging a stale gate](#debugging-a-stale-gate).
@@ -744,6 +716,17 @@ form on stdout). See [Debugging a stale gate](#debugging-a-stale-gate).
 > stderr) when you want explain output alongside a real run, or
 > compose with `markgate verify <key> --explain --json` ahead of
 > the child.
+
+### Exit codes
+
+Exit codes follow the `grep` / `diff` convention, so `||` composes
+naturally:
+
+| exit | meaning                                                   |
+| ---- | --------------------------------------------------------- |
+| 0    | verified — state matches the marker, safe to skip         |
+| 1    | not verified — no marker, state differs, or TTL expired   |
+| 2    | error — not in a repo, bad config, bad key, etc.          |
 
 ### `markgate status` (bare): list all gates
 
