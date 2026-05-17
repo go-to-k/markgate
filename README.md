@@ -91,7 +91,7 @@ proceed unless the marker confirms it ran**.
 Adoption is one line on each side:
 
 ```sh
-# At the end of /check-docs (Claude Code skill body, sign-off script, ...):
+# At the end of /check-docs (or any agent-driven step):
 markgate set
 
 # In a pre-commit hook (.claude/settings.json, PreToolUse on git commit*):
