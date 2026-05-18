@@ -85,11 +85,11 @@ sync with src?" "Did `/investigate-aws` find anything wrong?" An
 LLM-led skill can work through these — judging, investigating, or
 updating step by step. You want the **agent's own session** to do
 this work, where its built-up context (conversation history, open
-files, prior decisions) is already in play. (A hook could
-technically shell out to `claude -p`, but that runs in a fresh
-context, so the agent's prior state isn't there to build on.) So
-when the agent forgets or skips the task, the hook has no grip on
-whether it actually happened.
+files, prior decisions) is already in play. A hook can't reach
+into that session, and shelling out to `claude -p` only spawns a
+fresh one with no access to the agent's state. So when the agent
+forgets or skips the task, the hook has no grip on whether it
+actually happened.
 
 `markgate set` + `markgate verify` give the hook a grip by splitting
 the run. The skill — wherever it naturally lives, like `/check-docs`,
