@@ -15,6 +15,12 @@ operation with a pass/fail outcome. markgate addresses each with
 one of two primitives — `markgate run` (one-shot) or `markgate
 set` + `markgate verify` (the Gate pattern).
 
+| Pattern | Failure mode addressed | Mechanism |
+| --- | --- | --- |
+| 1 | Forgetting & duplicate execution | `markgate run` |
+| 2 | Hooks can't execute non-command tasks | `markgate set` + `markgate verify` |
+| 3 | Multi-task scope leak + N verify clutter | `.markgate.yml` with `composes` |
+
 ### Pattern 1: ensure non-duplicate runs (`markgate run`)
 
 You tell your coding agent to run `/check` (test, lint, build, doc
