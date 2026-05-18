@@ -83,7 +83,11 @@ shape is identical — see [Drop into your hook manager](#drop-into-your-hook-ma
 Some tasks aren't commands. "Did `/check-docs` find docs out of
 sync with src?" "Did `/investigate-aws` find anything wrong?" An
 LLM-led skill can work through these — judging, investigating, or
-updating step by step — but a hook can't execute any of it. So when
+updating step by step. You want the **agent's own session** to do
+this work, where its built-up context, the files it has open, and
+its prior decisions are already in play. (A hook could technically
+shell out to `claude -p`, but that runs in a fresh context, costs
+extra tokens, and bypasses the skill's iteration loop.) So when
 the agent forgets or skips the task, the hook has no grip on
 whether it actually happened.
 
