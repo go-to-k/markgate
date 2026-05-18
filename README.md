@@ -641,8 +641,11 @@ gates:
     composes: [check, docs]
 
   # requires: same propagation plus `markgate set deploy` is refused
-  # if `migration` is stale.
+  # if `migration` is stale. The parent declares its own `include:`,
+  # since deploy is an action gate with its own scope.
   deploy:
+    hash: files
+    include: ["k8s/**", "Dockerfile"]
     requires: [migration]
 
   check:
@@ -684,6 +687,12 @@ expects.
 - If unsure, start with `composes`. It's the looser of the two and
   doesn't change `set` semantics; you can promote to `requires`
   once you know you want `set` to refuse.
+
+`composes` parents are typically deps-only (no `include:`) — they
+exist purely to aggregate child verdicts. `requires` parents
+typically declare their own `include:` since they represent an
+action with its own scope (deploy manifests, image layers, release
+artifacts).
 
 ## CLI reference
 
