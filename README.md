@@ -347,7 +347,7 @@ markgate verify pre-commit || {
 
 `markgate set pre-commit` is unconditional — the parent records its marker even if a child is stale. That's the right default for *summary* gates that observe child state.
 
-**Strict variant (`requires`)** — same `verify` propagation, but `markgate set <parent>` is refused (exit 2) when any child is stale, and the error names the offending child. Reach for it when the parent represents an action that *must not happen* before its children pass — `deploy` requiring a fresh `migration` gate, `release` requiring a fresh `e2e` gate. See [Gate dependencies](#gate-dependencies-composes-vs-requires) for the full shape.
+**Strict variant (`requires`)** — same `verify` propagation, but `markgate set <parent>` is refused (exit 2) when any child is stale, and the error names the offending child. Reach for it when the parent gate represents a **declaration** that should be refused unless its dependencies are fresh — like `pr-ready` requiring `check` and `docs`, or `merge-ok` requiring all CI checks. See [Gate dependencies](#gate-dependencies-composes-vs-requires) for the full shape.
 
 ## How it works
 
@@ -640,10 +640,14 @@ gates:
   verify-pr:
     composes: [check, docs]
 
-  # requires: same propagation plus `markgate set deploy` is refused
-  # if `migration` is stale.
-  deploy:
-    requires: [migration]
+  # requires: same propagation plus `markgate set pr-ready` is
+  # refused unless every required child is fresh. The pr-ready
+  # gate declares its own `include:`, since its marker captures
+  # the state being declared "ready".
+  pr-ready:
+    hash: files
+    include: ["src/**", "docs/**"]
+    requires: [check, docs]
 
   check:
     hash: files
@@ -651,9 +655,6 @@ gates:
   docs:
     hash: files
     include: ["docs/**", "README.md"]
-  migration:
-    hash: files
-    include: ["db/migrations/**"]
 ```
 
 #### Parent's own scope
@@ -677,13 +678,21 @@ expects.
   for `verify-pr` shaped gates that combine independent checks; you
   set each child gate as that check finishes, and the parent's
   verdict tracks them automatically.
-- Reach for **`requires`** when the parent represents an action
-  that *must not happen* unless the children are demonstrably
-  fresh. Deploy after a passed migration, image push after a passed
-  vuln scan, release tag after a passed e2e suite.
+- Reach for **`requires`** when the parent gate represents a
+  **declaration** that should be refused unless its dependencies
+  are demonstrably fresh. The `set` itself is the declaration
+  moment (e.g., `markgate set pr-ready` after `check` / `docs`
+  have passed) — refusing to `set` prevents the declaration from
+  being recorded.
 - If unsure, start with `composes`. It's the looser of the two and
   doesn't change `set` semantics; you can promote to `requires`
   once you know you want `set` to refuse.
+
+Gates with `composes:` are typically deps-only (no `include:`) —
+they exist purely to aggregate the verdicts of their dependencies.
+Gates with `requires:` typically declare their own `include:`
+since their marker captures the state being declared (so the
+declaration can later be verified against the current state).
 
 ## CLI reference
 
@@ -1136,10 +1145,10 @@ markers where commit-access already implies trust in the signal.
   when the parent is a *summary* gate ("all the pieces I care about
   are currently fresh") — `set` of the parent is allowed regardless
   of child state, but `verify` propagates. Use `requires` when the
-  parent represents an action that must not happen unless every
-  child is demonstrably fresh (deploy after migration, image push
-  after vuln scan): `set` is refused with exit 2 if a required
-  child is stale. See
+  parent gate represents a **declaration** that should be refused
+  unless every dependency is fresh (e.g., `pr-ready` requiring
+  `check` and `docs`): `set` is the declaration itself and is
+  refused with exit 2 if a required child is stale. See
   [Gate dependencies](#gate-dependencies-composes-vs-requires).
 
 ## License
