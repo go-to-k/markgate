@@ -84,11 +84,11 @@ Some tasks aren't commands. "Did `/check-docs` find docs out of
 sync with src?" "Did `/investigate-aws` find anything wrong?" An
 LLM-led skill can work through these — judging, investigating, or
 updating step by step. You want the **agent's own session** to do
-this work, where its built-up context, the files it has open, and
-its prior decisions are already in play. (A hook could technically
-shell out to `claude -p`, but that runs in a fresh context, costs
-extra tokens, and bypasses the skill's iteration loop.) So when
-the agent forgets or skips the task, the hook has no grip on
+this work, where its built-up context (conversation history, open
+files, prior decisions) is already in play. (A hook could
+technically shell out to `claude -p`, but that runs in a fresh
+context, so the agent's prior state isn't there to build on.) So
+when the agent forgets or skips the task, the hook has no grip on
 whether it actually happened.
 
 `markgate set` + `markgate verify` give the hook a grip by splitting
