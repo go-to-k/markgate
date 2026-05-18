@@ -7,13 +7,14 @@ enforce **non-command tasks** (e.g., LLM review), and aggregate
 
 ## What markgate does
 
-Coding agents forget — context loss, token pressure, hurry. Hooks
-help, but have three failure modes when you want an AI coding
-agent to reliably run a required task — a check (lint, test,
+Coding agents forget — context loss, token pressure, hurry.
+Wiring hooks to reliably run a required task (a check (lint, test,
 build), an LLM-judged review, a code-generation step, or any
-operation with a pass/fail outcome. markgate addresses each with
-one of two primitives — `markgate run` (one-shot) or `markgate
-set` + `markgate verify` (the Gate pattern).
+operation with a pass/fail outcome) runs into **three recurring
+challenges**. markgate addresses these with **three patterns**,
+each backed by one of **two primitives** — `markgate run`
+(one-shot) or `markgate set` + `markgate verify` (the Gate
+pattern).
 
 | Pattern | Goal | Mechanism |
 | --- | --- | --- |
