@@ -1,5 +1,21 @@
 # Changelog
 
+## [v0.3.4](https://github.com/go-to-k/markgate/compare/v0.3.3...v0.3.4) - 2026-05-18
+- docs: add use case for composes / requires gate dependencies by @go-to-k in https://github.com/go-to-k/markgate/pull/49
+- docs: reframe Gate pattern around aggregate verify by @go-to-k in https://github.com/go-to-k/markgate/pull/51
+- docs: define marker inline at first use in Gate pattern by @go-to-k in https://github.com/go-to-k/markgate/pull/52
+- docs: mirror blog clarity pass on Gate pattern by @go-to-k in https://github.com/go-to-k/markgate/pull/53
+- docs: restructure README around three usage patterns by @go-to-k in https://github.com/go-to-k/markgate/pull/54
+- docs: thread "forgetting" framing through README front half by @go-to-k in https://github.com/go-to-k/markgate/pull/55
+- docs: rewrite Pattern 2 re-edit narrative for user-desire + plain language by @go-to-k in https://github.com/go-to-k/markgate/pull/56
+- docs: show requires parents with own include, name the composes/requires convention by @go-to-k in https://github.com/go-to-k/markgate/pull/57
+- test: cover composes/requires with own include by @go-to-k in https://github.com/go-to-k/markgate/pull/58
+- docs: add overview table to 'What markgate does' by @go-to-k in https://github.com/go-to-k/markgate/pull/59
+- docs: align overview table rows with Pattern subsection headings by @go-to-k in https://github.com/go-to-k/markgate/pull/60
+- docs: separate 'challenges' from 'markgate's patterns' in intro by @go-to-k in https://github.com/go-to-k/markgate/pull/61
+- docs: fix Pattern 2 overstatement that 'a hook can't execute' LLM skills by @go-to-k in https://github.com/go-to-k/markgate/pull/62
+- docs: inline the claude -p caveat instead of carrying it in parens by @go-to-k in https://github.com/go-to-k/markgate/pull/63
+
 ## [v0.3.3](https://github.com/go-to-k/markgate/compare/v0.3.2...v0.3.3) - 2026-05-09
 - docs: relocate Shell completion from Install to CLI reference by @go-to-k in https://github.com/go-to-k/markgate/pull/46
 - fix(cli): config lint mirrors runtime validation by @go-to-k in https://github.com/go-to-k/markgate/pull/48
