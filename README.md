@@ -640,13 +640,14 @@ gates:
   verify-pr:
     composes: [check, docs]
 
-  # requires: same propagation plus `markgate set deploy` is refused
-  # if `migration` is stale. The deploy gate declares its own
-  # `include:`, since it's an action gate with its own scope.
-  deploy:
+  # requires: same propagation plus `markgate set pr-ready` is
+  # refused unless every required child is fresh. The pr-ready
+  # gate declares its own `include:`, since its marker captures
+  # the state being declared "ready".
+  pr-ready:
     hash: files
-    include: ["deploy/**"]
-    requires: [migration]
+    include: ["src/**", "docs/**"]
+    requires: [check, docs]
 
   check:
     hash: files
@@ -654,9 +655,6 @@ gates:
   docs:
     hash: files
     include: ["docs/**", "README.md"]
-  migration:
-    hash: files
-    include: ["db/migrations/**"]
 ```
 
 #### Parent's own scope
@@ -680,10 +678,11 @@ expects.
   for `verify-pr` shaped gates that combine independent checks; you
   set each child gate as that check finishes, and the parent's
   verdict tracks them automatically.
-- Reach for **`requires`** when the parent represents an action
-  that *must not happen* unless the children are demonstrably
-  fresh. Deploy after a passed migration, image push after a passed
-  vuln scan, release tag after a passed e2e suite.
+- Reach for **`requires`** when the parent gate represents a
+  **declaration** that should be refused unless its dependencies
+  are demonstrably fresh — like marking a state as "PR-ready"
+  after `check` / `docs` have passed, or "merge-OK" after all CI
+  checks pass.
 - If unsure, start with `composes`. It's the looser of the two and
   doesn't change `set` semantics; you can promote to `requires`
   once you know you want `set` to refuse.
@@ -691,7 +690,8 @@ expects.
 Gates with `composes:` are typically deps-only (no `include:`) —
 they exist purely to aggregate the verdicts of their dependencies.
 Gates with `requires:` typically declare their own `include:`
-since they represent an action with its own scope.
+since their marker captures the state being declared (so the
+declaration can later be verified against the current state).
 
 ## CLI reference
 
