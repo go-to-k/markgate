@@ -498,6 +498,57 @@ code=$?
 assert_eq "requires set refuses stale-child exit=2" "2" "$code"
 assert_contains "requires error names offending child" "migration" "$out"
 
+cyan "=== #28 composes + parent include ==="
+new_repo
+cat > .markgate.yml <<'EOF'
+gates:
+  child: { hash: files, include: ["src/**"] }
+  pr:
+    hash: files
+    include: ["docs/**"]
+    composes: [child]
+EOF
+$MG set child >/dev/null 2>&1
+$MG set pr >/dev/null 2>&1
+$MG verify pr >/dev/null 2>&1
+assert_eq "composes+include verify all-match exit=0" "0" "$?"
+
+# Parent's own scope changes → verify mismatch (child still fresh).
+echo z >> docs/README.md
+$MG verify pr >/dev/null 2>&1
+assert_eq "composes+include verify parent-scope-stale exit=1" "1" "$?"
+
+cyan "=== #28 requires + parent include ==="
+new_repo
+cat > .markgate.yml <<'EOF'
+gates:
+  migration: { hash: files, include: ["src/**"] }
+  deploy:
+    hash: files
+    include: ["docs/**"]
+    requires: [migration]
+EOF
+$MG set migration >/dev/null 2>&1
+$MG set deploy >/dev/null 2>&1
+$MG verify deploy >/dev/null 2>&1
+assert_eq "requires+include verify all-match exit=0" "0" "$?"
+
+# Parent's own scope changes → verify mismatch.
+echo z >> docs/README.md
+$MG verify deploy >/dev/null 2>&1
+assert_eq "requires+include verify parent-scope-stale exit=1" "1" "$?"
+
+# set parent ignores parent's own digest — succeeds with fresh child.
+$MG set deploy >/dev/null 2>&1
+assert_eq "requires+include set parent succeeds with fresh child" "0" "$?"
+
+# Stale child → set parent refused (regardless of parent's own include).
+echo w >> src/a.go
+out=$($MG set deploy 2>&1)
+code=$?
+assert_eq "requires+include set refuses with stale child exit=2" "2" "$code"
+assert_contains "requires+include set error names child" "migration" "$out"
+
 cyan "=== #28 config-load errors ==="
 
 cat > .markgate.yml <<'EOF'
