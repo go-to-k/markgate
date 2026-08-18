@@ -2076,6 +2076,42 @@ func TestDiffHash_BaseOnNonDiffGateIsAConfigError(t *testing.T) {
 	}
 }
 
+// A gate with composes/requires and no include is deps-only, so it
+// never consults a hasher and would discard hash: diff and base:
+// entirely — including a base ref that does not resolve. That is the
+// same silent no-op TestDiffHash_BaseOnNonDiffGateIsAConfigError
+// prevents, seen from the other side, so it carries the same severity.
+func TestDiffHash_DepsOnlyGateRejectsDiff(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  child:\n    hash: files\n    include:\n      - \"src/**\"\n"+
+			"  parent:\n    hash: diff\n    base: origin/does-not-exist-at-all\n    composes: [child]\n")
+	if code, msg := runCmdMsg(t, "set", "parent"); code != 2 || !strings.Contains(msg, "requires its own scope") {
+		t.Errorf("set on a deps-only diff gate: code = %d, msg = %q", code, msg)
+	}
+	if code, out := runCmd(t, "config", "lint"); code != 1 || !strings.Contains(out, "hash=diff requires its own scope") {
+		t.Errorf("lint: code = %d, out = %q", code, out)
+	}
+	// The rule is about own scope, not about having children: adding
+	// include makes the same gate legal again.
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  child:\n    hash: files\n    include:\n      - \"src/**\"\n"+
+			"  parent:\n    hash: diff\n    base: main\n    include:\n      - \"src/**\"\n    composes: [child]\n")
+	if code, out := runCmd(t, "config", "lint"); code != 0 {
+		t.Errorf("diff gate with include + composes should lint clean: code = %d, out = %q", code, out)
+	}
+
+	// Same rule on the flag path, which bypasses config validation.
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  child:\n    hash: files\n    include:\n      - \"src/**\"\n"+
+			"  parent:\n    composes: [child]\n")
+	if code, msg := runCmdMsg(t, "set", "parent", "--hash", "diff", "--base", "main"); code != 2 ||
+		!strings.Contains(msg, "requires its own scope") {
+		t.Errorf("--hash diff on a deps-only gate: code = %d, msg = %q", code, msg)
+	}
+}
+
 func TestDiffHash_Flags(t *testing.T) {
 	dir := initRepo(t)
 	writeRepoFile(t, dir, "src/a.go", "a\n")

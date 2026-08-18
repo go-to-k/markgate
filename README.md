@@ -521,7 +521,7 @@ Per-gate fields:
 | field | purpose |
 | --- | --- |
 | `hash` | `git-tree` (default), `files`, or `diff` |
-| `include` | glob list; required for `hash: files`, optional for `hash: diff` (omitted = the branch's whole delta) |
+| `include` | glob list; required for `hash: files`, optional for `hash: diff` (omitted = the branch's whole delta) except on a gate with `composes`/`requires`, where omitting it would make the gate [deps-only](#gate-dependencies-composes-vs-requires) — that combination is rejected rather than silently ignoring `hash`/`base` |
 | `exclude` | glob list |
 | `base` | ref a `hash: diff` gate measures its delta from (e.g. `origin/main`); required there, rejected everywhere else — see [Hashing strategies](#hashing-strategies-git-tree-vs-files-vs-diff) |
 | `state_dir` | optional override of marker storage location — see [Sharing markers](#sharing-markers-across-machines-ci--teammates) |
@@ -767,6 +767,14 @@ A `markgate set <parent>` on a deps-only gate still records a
 marker, so `markgate clear <parent>` keeps working as the user
 expects.
 
+Because a deps-only gate never consults a hasher, `hash: diff` on
+one is a config error: its `base:` would be silently discarded, and
+a gate whose ref never has to resolve is exactly the kind of
+misconfiguration that reads as working. Add `include:` if you want
+the gate to have its own delta as well as children, or drop `hash:`
+and `base:`. `hash: git-tree` stays legal there — it is the default
+and carries no scope configuration to discard.
+
 #### Which one should I use?
 
 - Reach for **`composes`** when the parent is a *summary* gate that
@@ -918,8 +926,11 @@ so one-off scopes don't need a `.markgate.yml`:
 ```
 
 Flag syntax is identical across hash types. With `--hash files`,
-`--include` is required; with `--hash diff`, `--base` is. Example — exclude `vendor/` without any
-config file:
+`--include` is required; with `--hash diff`, `--base` is — and
+`--include` too, if the gate carries `composes`/`requires`, since
+without it the gate would be
+[deps-only](#gate-dependencies-composes-vs-requires) and never consult
+a hasher. Example — exclude `vendor/` without any config file:
 
 ```sh
 markgate run --exclude 'vendor/**' -- pnpm build
