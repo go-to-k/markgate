@@ -29,11 +29,6 @@ gates:
     #   - "vendor/**"
     #   - "node_modules/**"
     #
-    # An include list where no pattern matches any file in the working
-    # tree is a run-time error, not an empty scope: the digest would be
-    # a constant and the gate could never block. "markgate config lint"
-    # warns per pattern, so run it after renaming a directory.
-    #
     # state_dir controls where the marker file is written. Prefer
     # relative paths (resolved against the repo top-level) so every
     # machine agrees on the location. Two patterns:
@@ -52,6 +47,13 @@ gates:
     #        the marker it just wrote).
     #
     # See README "Sharing markers" for the full picture.
+
+  # On a SCOPED gate (hash: files or hash: diff), an include list where
+  # no pattern can match anything the gate sees is refused by set and
+  # reported as a mismatch by verify: its digest would be a constant and
+  # the gate could never block. "markgate config lint" warns per pattern,
+  # so run it after renaming a directory. This does not apply to the
+  # default hash: git-tree, whose scope is the whole repository.
 
   # Example: narrow-scope gate for PR-time docs checks.
   # pre-pr:

@@ -2551,9 +2551,10 @@ func TestDeadIncludeIsRefusedAtSet(t *testing.T) {
 }
 
 // The realistic path to a dead glob is a rename after the marker was
-// recorded, which is also the only way to reach a marker whose scope has
-// since died. verify must refuse rather than keep reporting match.
-func TestDeadIncludeIsRefusedAtVerifyAfterARename(t *testing.T) {
+// recorded. verify must stop reporting match — that is the whole bug —
+// without escalating to an error: exit 1 means "re-run the check", which
+// is what both a typo and a scope waiting to be rebuilt need.
+func TestDeadIncludeIsAMismatchAtVerifyAfterARename(t *testing.T) {
 	dir := initRepo(t)
 	writeRepoFile(t, dir, "src/a.go", "a")
 	writeRepoFile(t, dir, ".markgate.yml",
@@ -2571,8 +2572,46 @@ func TestDeadIncludeIsRefusedAtVerifyAfterARename(t *testing.T) {
 	gitIn(t, dir, "mv", "src", "source")
 	gitIn(t, dir, "commit", "-qm", "rename src -> source")
 
-	if code, msg := runCmdMsg(t, "verify", "scan"); code != 2 || !strings.Contains(msg, "src/**") {
-		t.Errorf("verify after the rename: code = %d, msg = %q; want 2 naming src/**", code, msg)
+	code, _, stderr := runCmdStderr(t, "verify", "scan")
+	if code != 1 {
+		t.Errorf("verify after the rename: code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "src/**") {
+		t.Errorf("verify did not name the dead pattern: %q", stderr)
+	}
+	// set is where the constant would actually be recorded, and by then
+	// any gated command has had its chance to refill the scope.
+	if code, msg := runCmdMsg(t, "set", "scan"); code != 2 || !strings.Contains(msg, "src/**") {
+		t.Errorf("set after the rename: code = %d, msg = %q; want 2 naming src/**", code, msg)
+	}
+}
+
+// The regression that erroring at verify caused: a gate on build output
+// is legitimately empty between `make clean` and the next build, and a
+// second `run` cycle must rebuild rather than lock the gate out. This is
+// the README's own dist example, run twice.
+func TestDeadIncludeRebuildsAfterTheScopeIsCleaned(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+
+	build := []string{"run", "dist", "--hash", "files", "--include", "dist/**",
+		"--", "sh", "-c", "mkdir -p dist && echo built > dist/x"}
+	if code, _ := runCmd(t, build...); code != 0 {
+		t.Fatal("first build should bootstrap the scope")
+	}
+	if err := os.RemoveAll(filepath.Join(dir, "dist")); err != nil {
+		t.Fatal(err)
+	}
+
+	// The marker still exists and the scope is now empty. Erroring here
+	// would leave the gate recoverable only via `markgate clear`.
+	if code, _ := runCmd(t, build...); code != 0 {
+		t.Errorf("rebuild after clean: code = %d, want 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dist", "x")); err != nil {
+		t.Errorf("the child did not rebuild: %v", err)
 	}
 }
 
@@ -2686,8 +2725,7 @@ func TestDeadIncludeDegradesBareStatus(t *testing.T) {
 	if !strings.Contains(out, "healthy") {
 		t.Errorf("bare status stopped rendering other gates: %q", out)
 	}
-	// Single-key status is not a listing, so it errors like everything else.
-	if code, _ := runCmd(t, "status", "scan"); code != 2 {
-		t.Errorf("status scan: code = %d, want 2", code)
+	if code, out := runCmd(t, "status", "scan"); code != 1 || !strings.Contains(out, "dead scope") {
+		t.Errorf("status scan: code = %d, out = %q; want 1 naming the dead scope", code, out)
 	}
 }

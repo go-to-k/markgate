@@ -213,6 +213,11 @@ type evalResult struct {
 	hashTypeChanged bool
 	ownDigestDiff   bool
 	ttl             ttlExpiry
+	// deadScope carries hasher.ErrDeadScope when the gate's include list
+	// can no longer match anything. It is a mismatch rather than an
+	// error so `run` still executes the command that would refill the
+	// scope; only `set` refuses, and it does so from newMarker.
+	deadScope error
 }
 
 // evaluate computes the recursive freshness verdict for c. It loads the
@@ -261,6 +266,16 @@ func (c *gateCtx) evaluate() (evalResult, error) {
 	}
 	if c.gate.HasOwnScope() {
 		digest, hashErr := c.hasher.Hash(c.repo)
+		if errors.Is(hashErr, hasher.ErrDeadScope) {
+			// Not fresh — that is the bug this closes — but not fatal
+			// either. A gate on build output is legitimately empty
+			// between `make clean` and the next build, and erroring here
+			// would stop `run` from executing the command that refills
+			// it, leaving the gate recoverable only via `clear`.
+			res.deadScope = hashErr
+			res.reason = "dead scope"
+			return res, nil
+		}
 		if hashErr != nil {
 			return evalResult{}, hashErr
 		}

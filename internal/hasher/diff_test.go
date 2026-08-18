@@ -507,3 +507,51 @@ func TestDiff_NoIncludeIsNotDead(t *testing.T) {
 		t.Errorf("include-less Diff should not report a dead scope: %v", err)
 	}
 }
+
+// A delta can never contain an ignored path or anything under .git/, so
+// an include matching only those is permanently empty however live it
+// looks on disk — the same fail-open a typo produces, reached by a
+// different route. Globbing the working tree would call it live.
+func TestDiff_IncludeMatchingOnlyUnreachablePathsIsDead(t *testing.T) {
+	repo, dir := newDiffRepo(t)
+	writeFile(t, dir, ".gitignore", "build/\n")
+	runGit(t, dir, "add", ".gitignore")
+	runGit(t, dir, "commit", "-qm", "ignore build")
+	writeFile(t, dir, "build/out.bin", "bin")
+	writeFile(t, dir, "src/a.go", "mine\n")
+	runGit(t, dir, "commit", "-qam", "my work")
+
+	for _, include := range [][]string{{"build/**"}, {".git/HEAD"}} {
+		h := Diff{Include: include, Base: "main"}
+		if _, err := h.Hash(repo); !errors.Is(err, ErrDeadScope) {
+			t.Errorf("include %v: Hash err = %v, want ErrDeadScope", include, err)
+		}
+	}
+
+	// Untracked-but-not-ignored can enter a delta, so it is live.
+	writeFile(t, dir, "src/new.go", "new\n")
+	if _, err := (Diff{Include: []string{"src/new.go"}, Base: "main"}).Hash(repo); err != nil {
+		t.Errorf("untracked-not-ignored include should be live: %v", err)
+	}
+}
+
+// The scopeLen short-circuit is not just an optimization: a delta made
+// only of paths deleted from the working tree has a real scope that no
+// worktree glob can see. Without the guard those gates would be refused.
+func TestDiff_DeletedOnlyDeltaIsNotDead(t *testing.T) {
+	repo, dir := newDiffRepo(t)
+	runGit(t, dir, "rm", "-q", "-r", "docs")
+	runGit(t, dir, "commit", "-qm", "delete docs")
+
+	h := Diff{Include: []string{"docs/**"}, Base: "main"}
+	scope, err := h.Scope(repo)
+	if err != nil {
+		t.Fatalf("deleted-only delta: %v", err)
+	}
+	if len(scope) == 0 {
+		t.Fatal("fixture broken: the delta should still carry the deleted paths")
+	}
+	if _, err := h.Hash(repo); err != nil {
+		t.Errorf("deleted-only delta should hash: %v", err)
+	}
+}

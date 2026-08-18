@@ -795,7 +795,27 @@ assert_file "dead glob: --explain did not suppress the child" "dist/x"
 $MG set typo2 --hash files --include "scr/**" --explain >/dev/null 2>&1
 assert_eq "dead glob: set --explain still refuses the digest exit=2" "2" "$?"
 
+# A scope cleaned away between builds must rebuild, not lock the gate
+# out. This is the regression that refusing on the read path caused.
+rm -rf dist
+$MG run dist --hash files --include "dist/**" -- sh -c 'mkdir -p dist && echo built > dist/x' >/dev/null 2>&1
+assert_eq "dead glob: second run cycle rebuilds exit=0" "0" "$?"
+assert_file "dead glob: the cleaned scope was rebuilt" "dist/x"
+
+# The candidate universe differs per mode: files hashes gitignored paths,
+# a diff delta can never contain them.
+echo "ignored/" > .gitignore
+mkdir -p ignored && echo bin > ignored/out.bin
+git add .gitignore && git commit -qm "ignore" >/dev/null
+$MG set fign --hash files --include "ignored/**" >/dev/null 2>&1
+assert_eq "dead glob: files may scope gitignored paths exit=0" "0" "$?"
+out=$($MG set dign --hash diff --base main --include "ignored/**" 2>&1)
+assert_eq "dead glob: diff refuses a gitignore-only include exit=2" "2" "$?"
+assert_contains "dead glob: diff refusal names the pattern" "ignored/**" "$out"
+
 # A rename is the realistic way a live scope dies under an existing marker.
+# Only scan is narrowed, so healthy proves the listing still renders rows
+# that are fine — the whole point of degrading rather than aborting.
 cat > .markgate.yml <<'EOF'
 gates:
   scan:
@@ -805,21 +825,30 @@ gates:
   healthy:
     hash: files
     include:
-      - "src/**"
+      - "docs/**"
 EOF
 $MG set scan >/dev/null 2>&1
 $MG set healthy >/dev/null 2>&1
 git mv src source >/dev/null 2>&1
 out=$($MG verify scan 2>&1)
-assert_eq "dead glob: verify after a rename exit=2" "2" "$?"
-assert_contains "dead glob: rename error names the pattern" "src/**" "$out"
+assert_eq "dead glob: verify after a rename is a mismatch exit=1" "1" "$?"
+assert_contains "dead glob: rename mismatch names the pattern" "src/**" "$out"
+out=$($MG set scan 2>&1)
+assert_eq "dead glob: set after a rename exit=2" "2" "$?"
+assert_contains "dead glob: set refusal names the pattern" "src/**" "$out"
 
 # Bare status degrades the one bad row and keeps listing the rest.
 out=$($MG status 2>&1)
 assert_contains "dead glob: bare status reports the dead row" "dead scope" "$out"
-assert_contains "dead glob: bare status keeps rendering other gates" "healthy" "$out"
-$MG status scan >/dev/null 2>&1
-assert_eq "dead glob: single-key status errors exit=2" "2" "$?"
+assert_contains "dead glob: bare status still lists the healthy gate" "healthy" "$out"
+# Column padding varies with the widest key in the sandbox, so assert the
+# healthy gate's verdict through its own status rather than by scraping
+# the table.
+$MG status healthy >/dev/null 2>&1
+assert_eq "dead glob: the healthy gate is unaffected exit=0" "0" "$?"
+out=$($MG status scan 2>&1)
+assert_eq "dead glob: single-key status is a mismatch exit=1" "1" "$?"
+assert_contains "dead glob: single-key status explains why" "dead scope" "$out"
 
 # ─────────────────────────────────────────────────────────────────
 echo

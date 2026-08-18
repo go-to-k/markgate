@@ -33,6 +33,9 @@ func newVerifyCmd() *cobra.Command {
 		if emitErr := emitExplain(c, explain, cmd.OutOrStdout(), cmd.ErrOrStderr(), label); emitErr != nil {
 			return &ExitError{Code: 2, Err: emitErr}
 		}
+		if res.deadScope != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "markgate: %s\n", res.deadScope)
+		}
 		if res.ttl.expired {
 			fmt.Fprintf(cmd.ErrOrStderr(),
 				"markgate: state mismatch (expired by ttl: %s, marker is %s old)\n",

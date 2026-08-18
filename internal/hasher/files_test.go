@@ -160,6 +160,37 @@ func TestFiles_ExcludeEmptyingTheScopeIsNotDead(t *testing.T) {
 	if len(scope) != 0 {
 		t.Errorf("scope = %v, want empty", scope)
 	}
+	// Hash is where the refusal lives, so Scope alone would not notice a
+	// check that stopped distinguishing the two empty scopes.
+	if _, err := h.Hash(repo); err != nil {
+		t.Errorf("exclude-emptied Hash should not error: %v", err)
+	}
+}
+
+// Files hashes whatever is on disk, ignored or not, so an include that
+// matches only gitignored paths is a real scope and must stay legal.
+// Diff draws from a git delta instead, which is why the two strategies
+// need different candidate universes.
+func TestFiles_GitignoredIncludeIsLive(t *testing.T) {
+	repo, dir := newTestRepo(t)
+	writeFile(t, dir, ".gitignore", "build/\n")
+	writeFile(t, dir, "build/out.bin", "bin")
+	runGit(t, dir, "add", ".gitignore")
+	runGit(t, dir, "commit", "-qm", "ignore build")
+
+	h := Files{Include: []string{"build/**"}}
+	before, err := h.Hash(repo)
+	if err != nil {
+		t.Fatalf("gitignored include should hash under files: %v", err)
+	}
+	writeFile(t, dir, "build/out.bin", "changed")
+	after, err := h.Hash(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Error("files did not notice a change under a gitignored include")
+	}
 }
 
 // A gate with no include at all covers the whole tree and cannot be

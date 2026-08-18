@@ -198,6 +198,19 @@ func (r *Repo) DiffFrom(rev string) ([]DiffEntry, error) {
 	return entries, nil
 }
 
+// CandidateNames returns every path git can report in a diff or as
+// untracked: what is in the index, plus what is untracked and not
+// ignored. One ls-files invocation covers both, and the two sets are
+// disjoint by definition. Repo-relative, whole repository regardless
+// of cwd.
+func (r *Repo) CandidateNames() ([]string, error) {
+	out, err := r.runAtRoot("ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	return splitNUL(out), nil
+}
+
 // UntrackedNames returns paths (repo-relative) that are untracked but not
 // ignored, for the whole repository regardless of cwd.
 func (r *Repo) UntrackedNames() ([]string, error) {
