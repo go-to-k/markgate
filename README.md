@@ -856,6 +856,13 @@ markgate verify     [key]              Exit 0 match, 1 mismatch (incl. ttl
 markgate status     [key]              Show marker + match status (bare:
                                        list every known gate).
 markgate clear      [key]              Delete the marker (idempotent).
+                                       The only command that does not
+                                       require .markgate.yml to be valid
+                                       — it needs the marker's location,
+                                       not the gate's semantics — so a
+                                       config error elsewhere cannot
+                                       leave markers unremovable. The
+                                       error is still reported.
 markgate run        [key] -- <cmd>...  Sugar for verify + <cmd> + set.
 markgate init                          Write a starter .markgate.yml.
 markgate config lint                   Warn per pattern on dead
@@ -1312,6 +1319,17 @@ markers where commit-access already implies trust in the signal.
   `.markgate.yml`. See
   [Sharing markers](#sharing-markers-across-machines-ci--teammates) for patterns
   and trust considerations.
+- **My `.markgate.yml` is broken and now nothing works.** `clear`
+  still does. Every other command resolves a hasher and computes a
+  digest, so a config error stops them by design — but `clear` only
+  needs to know where the marker lives, and refusing there would put
+  the recovery path inside the trap: markers for *valid* gates would
+  be unremovable too. `clear` reports the config error on stderr and
+  removes the marker anyway. If the YAML cannot even be parsed, its
+  `state_dir:` is unknowable, so `clear` says which location it used
+  and falls back to `--state-dir` / `MARKGATE_STATE_DIR` / the
+  default.
+
 - **Can the marker be tampered with?** Yes — it's a JSON file under
   `.git/` (or wherever `--state-dir` points). Trust whoever can write
   to that location. Signed markers are still a future consideration.

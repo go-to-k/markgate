@@ -107,6 +107,26 @@ type Finding struct {
 // Load reads topLevel/.markgate.yml. A missing file yields an empty
 // Config (never nil) so callers can always call c.Gate(...) safely.
 func Load(topLevel string) (*Config, error) {
+	c, err := Parse(topLevel)
+	if err != nil {
+		return nil, err
+	}
+	if findings := c.Validate(); len(findings) > 0 {
+		return nil, errors.New(findings[0].Message)
+	}
+	return c, nil
+}
+
+// Parse reads and unmarshals the config without validating it. A missing
+// file is not an error and yields an empty Config, same as Load.
+//
+// Split out for `clear`, whose only use of the config is state_dir: a
+// gate that fails validation still declares its storage location
+// accurately, and making marker removal depend on the whole document
+// being valid puts the recovery path inside the trap it recovers from.
+// Every other command resolves a hasher and computes a digest, so they
+// go through Load and keep failing loudly on a bad config.
+func Parse(topLevel string) (*Config, error) {
 	path := filepath.Join(topLevel, Filename)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -118,9 +138,6 @@ func Load(topLevel string) (*Config, error) {
 	var c Config
 	if err := yaml.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", Filename, err)
-	}
-	if findings := c.Validate(); len(findings) > 0 {
-		return nil, errors.New(findings[0].Message)
 	}
 	return &c, nil
 }

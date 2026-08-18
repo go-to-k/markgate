@@ -141,6 +141,63 @@ func newGateCtx(k string, overrides *gateFlagValues) (*gateCtx, error) {
 	}, nil
 }
 
+// clearTarget is everything `clear` needs and nothing more: which
+// marker file to remove.
+type clearTarget struct {
+	key        string
+	markerPath string
+}
+
+// newClearTarget resolves the marker path without validating the config.
+//
+// `clear` deletes a file; its only config dependency is state_dir. The
+// whole-document validation every other command inherits from
+// newGateCtx is an incidental coupling here, and an expensive one: it
+// makes the recovery path unusable in exactly the situation it exists
+// for, leaving hand-editing YAML as the only way to remove a marker —
+// including markers for gates that are perfectly fine.
+//
+// Validation is skipped, not weakened. Every command that resolves a
+// hasher still goes through Load and still refuses a bad config, so a
+// typo is still caught the next time anything is actually gated.
+func newClearTarget(k string, overrides *gateFlagValues, errOut io.Writer) (*clearTarget, error) {
+	if err := key.Validate(k); err != nil {
+		return nil, &ExitError{Code: 2, Err: err}
+	}
+	repo := gitutil.New("")
+	top, err := repo.TopLevel()
+	if err != nil {
+		return nil, &ExitError{Code: 2, Err: err}
+	}
+	gitDir, err := repo.GitDir()
+	if err != nil {
+		return nil, &ExitError{Code: 2, Err: err}
+	}
+
+	var gate config.Gate
+	cfg, parseErr := config.Parse(top)
+	switch {
+	case parseErr != nil:
+		// Unparseable: state_dir is unknowable, so say which location is
+		// being used instead of reporting a removal that may have
+		// happened somewhere else.
+		fmt.Fprintf(errOut, "markgate: %s could not be read (%v); using the default marker location\n",
+			config.Filename, parseErr)
+	default:
+		gate = cfg.Gate(k)
+		// Clearing must not double as a way to stop noticing the errors.
+		if findings := cfg.Validate(); len(findings) > 0 {
+			fmt.Fprintf(errOut, "markgate: %s still has errors (%s); clearing anyway\n",
+				config.Filename, findings[0].Message)
+		}
+	}
+
+	return &clearTarget{
+		key:        k,
+		markerPath: resolveMarkerPath(overrides, gate, top, gitDir, k),
+	}, nil
+}
+
 // newGateCtxWithConfig builds a gateCtx from already-resolved
 // components, skipping the config / git / hasher I/O newGateCtx does.
 // Used by callers that walk multiple keys (bare `status`) to avoid

@@ -866,6 +866,66 @@ out=$($MG status scan 2>&1)
 assert_eq "dead glob: single-key status is a mismatch exit=1" "1" "$?"
 assert_contains "dead glob: single-key status explains why" "dead scope" "$out"
 
+cyan "=== #77 clear survives an invalid config ==="
+new_repo
+
+cat > .markgate.yml <<'EOF'
+gates:
+  good:
+    hash: files
+    include:
+      - "src/**"
+    state_dir: .mg-store
+EOF
+$MG set good >/dev/null 2>&1
+assert_file "clear: seed marker written to state_dir" ".mg-store/good.json"
+
+# A different gate goes invalid. Removal must not become impossible.
+cat > .markgate.yml <<'EOF'
+gates:
+  good:
+    hash: files
+    include:
+      - "src/**"
+    state_dir: .mg-store
+  broken:
+    hash: bogus
+EOF
+out=$($MG clear good 2>&1)
+assert_eq "clear: invalid config still clears exit=0" "0" "$?"
+assert_absent "clear: the marker really went" ".mg-store/good.json"
+assert_absent "clear: state_dir honored, no default dir made" ".git/markgate"
+assert_contains "clear: the config error is still reported" "bogus" "$out"
+
+# Skipped for clear, not weakened.
+$MG set good >/dev/null 2>&1
+assert_eq "clear: set still refuses an invalid config exit=2" "2" "$?"
+$MG verify good >/dev/null 2>&1
+assert_eq "clear: verify still refuses an invalid config exit=2" "2" "$?"
+$MG status >/dev/null 2>&1
+assert_eq "clear: status still refuses an invalid config exit=2" "2" "$?"
+
+# Unparseable: state_dir is unknowable, so say which location was used.
+$MG set k --hash files --include "src/**" --state-dir .mg2 >/dev/null 2>&1
+printf 'gates:\n  good: {hash: files\n' > .markgate.yml
+out=$($MG clear k --state-dir .mg2 2>&1)
+assert_eq "clear: unparseable config still clears exit=0" "0" "$?"
+assert_contains "clear: says the config could not be read" "could not be read" "$out"
+assert_absent "clear: --state-dir still resolves exactly" ".mg2/k.json"
+
+# A clean config must stay silent, or the warnings above mean nothing.
+cat > .markgate.yml <<'EOF'
+gates:
+  good:
+    hash: files
+    include:
+      - "src/**"
+EOF
+$MG set good >/dev/null 2>&1
+out=$($MG clear good 2>&1)
+assert_eq "clear: valid config clears exit=0" "0" "$?"
+assert_eq "clear: valid config warns about nothing" "cleared: good" "$out"
+
 # ─────────────────────────────────────────────────────────────────
 echo
 cyan "=== summary ==="

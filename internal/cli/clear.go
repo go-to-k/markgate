@@ -10,14 +10,20 @@ import (
 
 func newClearCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "clear [key]",
-		Short:             "Remove the marker (idempotent)",
+		Use:   "clear [key]",
+		Short: "Remove the marker (idempotent)",
+		Long: "Remove the marker for [key] (default: \"default\"). Idempotent:\n" +
+			"removing a marker that is not there succeeds.\n\n" +
+			"clear does not require .markgate.yml to be valid. It only needs to\n" +
+			"know where the marker lives, so a config error elsewhere must not\n" +
+			"stop you cleaning up — every other command still refuses a bad\n" +
+			"config. Errors are reported on stderr so clearing never hides them.",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: gateKeyCompletion,
 	}
 	overrides := addGateFlags(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
-		c, err := newGateCtx(resolveKey(args), overrides)
+		c, err := newClearTarget(resolveKey(args), overrides, cmd.ErrOrStderr())
 		if err != nil {
 			return err
 		}
