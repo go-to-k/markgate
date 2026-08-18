@@ -28,9 +28,9 @@ the manual entry point and a good rehearsal step before pushing.
 
 ## What it covers
 
-119 assertions across three layers:
+Three layers of assertions (the script prints the count on every run; it is deliberately not restated here, because a number copied into prose drifts):
 
-**Core primitives (37 assertions)**
+**Core primitives**
 
 - `set` / `verify` / `clear` cycle including `clear` idempotency
 - Default key (no positional arg) → `default`
@@ -43,7 +43,7 @@ the manual entry point and a good rehearsal step before pushing.
 - `init` writes `.markgate.yml` and is non-clobbering
 - `version` prints something
 
-**2026-05-09 batch features (61 assertions)**
+**2026-05-09 batch features**
 
 - `completion`: bash script emit, unknown-shell exit=2, dynamic
   gate-key completion via `__complete`
@@ -61,7 +61,7 @@ the manual entry point and a good rehearsal step before pushing.
 - Config-load errors: cycle / missing child / both fields set
   all reject at exit=2
 
-**`hash: diff` (21 assertions)**
+**`hash: diff`**
 
 - set / verify on a branch ahead of the base; `status` records the
   base ref and the resolved merge base
@@ -84,7 +84,7 @@ The hook wraps the script in `go run ./cmd/markgate run
 hook-e2e-pre-merge -- bash .claude/scripts/e2e.sh`, so:
 
 - **First run after a source change**: full ~10–15s execution
-  (build + 119 assertions, the script does its own `go build` to
+  (build + every assertion, the script does its own `go build` to
   the temp dir).
 - **Repeat run with no source change**: ~0.1s skip, marker hit.
 
@@ -95,7 +95,7 @@ any source change invalidates it.
 ## Running it
 
 ```sh
-bash .claude/scripts/e2e.sh             # full run, 119 PASS lines + summary
+bash .claude/scripts/e2e.sh             # full run, one PASS line per assertion + summary
 QUIET=1 bash .claude/scripts/e2e.sh     # only print section headers + failures
 ```
 

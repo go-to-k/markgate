@@ -3,8 +3,10 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -225,12 +227,16 @@ type evalResult struct {
 // child's expired TTL propagates up — the parent's evaluate will
 // receive matched=false from the child and bubble it.
 func (c *gateCtx) evaluate() (evalResult, error) {
-	if err := c.preflight(); err != nil {
-		return evalResult{}, err
-	}
 	m, err := state.Load(c.markerPath)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
+			// Nothing to compare against, so no digest gets computed on
+			// this path and the hasher's preconditions would go
+			// unchecked — leaving `run` to execute its child first and
+			// refuse to record the result afterwards.
+			if pErr := c.preflight(); pErr != nil {
+				return evalResult{}, pErr
+			}
 			return evalResult{reason: "no marker"}, nil
 		}
 		return evalResult{}, err
@@ -244,6 +250,11 @@ func (c *gateCtx) evaluate() (evalResult, error) {
 		// Gate flipped between own-scope and deps-only since last set;
 		// the marker is from a different freshness model. Treat it as
 		// stale so the next set rewrites it under the current model.
+		// Same reasoning as the no-marker path: this returns without
+		// hashing, so preconditions need their own check.
+		if pErr := c.preflight(); pErr != nil {
+			return evalResult{}, pErr
+		}
 		res.hashTypeChanged = true
 		res.reason = "marker kind changed"
 		return res, nil
@@ -300,12 +311,47 @@ func (c *gateCtx) evaluate() (evalResult, error) {
 // base would report a plain mismatch, `run` would execute its (by
 // assumption expensive) child, and only the closing `set` would refuse —
 // after the cost was already paid.
+//
+// Callers invoke it ONLY on paths that return without hashing: when a
+// digest is computed, Hash reports the same errors, and running both
+// would double every diff gate's git work on the hot path.
 func (c *gateCtx) preflight() error {
+	if !c.gate.HasOwnScope() {
+		// Freshness is purely the AND of children; the hasher is never
+		// consulted, so its preconditions are not this gate's business.
+		return nil
+	}
 	d, ok := c.hasher.(hasher.Diff)
 	if !ok {
 		return nil
 	}
 	return d.Preflight(c.repo)
+}
+
+// warnEmptyDiffScope reports a diff gate recording a marker whose
+// in-scope delta is empty. That digest is a constant: legitimate when
+// the branch genuinely changes nothing the gate covers (the case this
+// hash type exists to keep fresh), and the signature of a typo'd
+// include otherwise. Refusing would make the gate unusable on branches
+// it should trivially pass, so the compromise is that it is never
+// silent — the same class of mistake that made a cwd-scoped delta look
+// like a permanently fresh marker.
+func warnEmptyDiffScope(c *gateCtx, errOut io.Writer) {
+	d, ok := c.hasher.(hasher.Diff)
+	if !ok {
+		return
+	}
+	scope, err := d.Scope(c.repo)
+	if err != nil || len(scope) > 0 {
+		return
+	}
+	patterns := "(everything)"
+	if len(c.gate.Include) > 0 {
+		patterns = strings.Join(c.gate.Include, ", ")
+	}
+	fmt.Fprintf(errOut,
+		"markgate: %s: hash=diff recorded an empty in-scope delta (include: %s); this branch changes nothing the gate covers, so the marker stays fresh until it does\n",
+		c.key, patterns)
 }
 
 // staleRequiredChild returns the key of the first direct requires child

@@ -521,7 +521,7 @@ Per-gate fields:
 | field | purpose |
 | --- | --- |
 | `hash` | `git-tree` (default), `files`, or `diff` |
-| `include` | glob list; required for `hash: files` |
+| `include` | glob list; required for `hash: files`, optional for `hash: diff` (omitted = the branch's whole delta) |
 | `exclude` | glob list |
 | `base` | ref a `hash: diff` gate measures its delta from (e.g. `origin/main`); required there, rejected everywhere else — see [Hashing strategies](#hashing-strategies-git-tree-vs-files-vs-diff) |
 | `state_dir` | optional override of marker storage location — see [Sharing markers](#sharing-markers-across-machines-ci--teammates) |
@@ -569,6 +569,7 @@ The `hash` field above picks one of three strategies:
 | Changes pulled from the base branch invalidate? | Yes | Yes, if in scope | Only for files you also changed |
 | `.gitignore` respected? | Yes (automatic) | No — scope is explicit | Yes (untracked-not-ignored) |
 | Needs config? | No | Yes (`include` required) | Yes (`base` required) |
+| Strictness | Strictest | Narrowed to your globs | **Least strict** — a base-branch change your branch does not touch is trusted unverified; see the limitation below |
 
 When to use which:
 
@@ -582,7 +583,10 @@ When to use which:
 - **`diff`** = "re-verify only when *my branch's* changes move".
   Expensive gates on long-lived branches, where most invalidations
   come from merging an updated base branch rather than from your own
-  work.
+  work. It is the **least strict** of the three and the only one that
+  can call a state fresh that was never verified in that exact
+  combination — adopt it deliberately, after reading
+  [what it does not catch](#hash-diff--ignore-changes-that-arrive-from-the-base-branch).
 
 Rule of thumb: start with `git-tree` (add `exclude` if needed).
 Reach for `files` only when you specifically want the "ignore
@@ -657,8 +661,11 @@ disk — never from the text `git diff` prints, which moves with
 other per-user settings. Two machines holding the same content
 therefore agree on the digest, which is what makes a `diff` gate safe
 to share (see [Sharing markers](#sharing-markers-across-machines-ci--teammates)).
-Binary files are compared as bytes, and a mode-only change (`chmod`)
-adds the path to the delta and invalidates.
+Binary files are compared as bytes. A mode-only change (`chmod`) on a
+path that was not already in the delta adds it and invalidates; on a
+path the branch had already modified it does not, because markgate
+hashes content and never permission bits (`hash: files` and
+`git-tree` ignore mode entirely).
 
 `ttl`, `composes`, and `requires` are **optional** — the basic
 gate pattern works without them. Skip the rest of this section
@@ -1033,11 +1040,11 @@ marker is **committed** to the repo.
 | aspect | **A. Not committed** (CI cache / artifact) | **B. Committed** |
 | --- | --- | --- |
 | Marker in the repo? | No (typically gitignored, or outside the repo) | Yes, tracked in git |
-| Works with hash type | any | **`files` or `diff`** — committing with `git-tree` breaks: the commit changes HEAD → digest is instantly stale |
+| Works with hash type | any | **`files`, or `diff` with the state dir out of scope** — committing with `git-tree` breaks: the commit changes HEAD → digest is instantly stale |
 | Local → CI sharing | Needs CI cache / artifact / shared volume | Just `git push` |
 | Tamper surface | Whoever can write to the cache | Whoever has commit access |
 | Extra infra | CI cache provider (e.g. `actions/cache`, `actions/upload-artifact`) | None — git is enough |
-| Best for | CI-internal reuse across runs; teams already on remote cache infra | Zero-infra local→CI sharing for `files`-hash gates (coverage, scans) |
+| Best for | CI-internal reuse across runs; teams already on remote cache infra | Zero-infra local→CI sharing for scoped gates (coverage, scans) |
 
 ### A. Not committed (CI cache / artifact)
 
@@ -1045,13 +1052,15 @@ Store the marker somewhere CI can pick it up, but keep it out of git.
 `.markgate-cache/` at the repo root is a conventional choice; any
 path outside `.git/` works. (If you'd rather commit the marker into
 git so CI sees it without any cache layer, skip to
-[Pattern B](#b-committed-files-hash) — that's a different shape, not
+[Pattern B](#b-committed-scoped-hash) — that's a different shape, not
 a variant of this one.)
 
 #### Step 1. Add the state dir to `.gitignore`
 
-**This is a required setup step on `hash: git-tree`, not optional
-hygiene.** Do this *before* your first `markgate run`:
+**This is a required setup step on `hash: git-tree` — and on any
+`hash: diff` gate whose `include`/`exclude` does not keep the state dir
+out of the delta — not optional hygiene.** Do this *before* your first
+`markgate run`:
 
 ```gitignore
 # .gitignore — add the state dir you chose
@@ -1062,8 +1071,9 @@ You can skip this only if:
 
 - the state dir is **outside the repo** (e.g. `$RUNNER_TEMP/mg`,
   `/tmp/mg`, `$HOME/.cache/markgate`), **or**
-- you're on `hash: files` (gitignore then becomes hygiene, not
-  required — see why below).
+- you're on `hash: files`, or on a `hash: diff` gate whose
+  `include`/`exclude` keeps the state dir out of the delta (gitignore
+  then becomes hygiene, not required — see why below).
 
 <details>
 <summary>Why it's required on <code>hash: git-tree</code> (click to expand)</summary>
@@ -1085,6 +1095,12 @@ Gitignoring the state dir keeps the marker out of the digest.
 `hash: files` sidesteps this: the marker is only in the digest if an
 `include` glob matches it, which it normally won't. That's why
 gitignore is optional on `files`.
+
+`hash: diff` sidesteps it the same way **when the gate is scoped** —
+the marker is an untracked file, so it lands in the branch's delta
+unless `include`/`exclude` filters it out. An unscoped diff gate (no
+`include`) behaves exactly like `git-tree` here, so gitignore the
+state dir or scope the gate.
 
 </details>
 
@@ -1141,11 +1157,19 @@ jobs:
       - run: markgate verify expensive --state-dir .markgate-cache || make expensive-check
 ```
 
-### B. Committed (files hash)
+### B. Committed (scoped hash)
 
 Keep the state directory **tracked in git** and commit the marker with
-the code. Works only with `hash: files`: `git-tree` would change HEAD
-on the commit and invalidate the marker it just wrote.
+the code. Requires a hash type that ignores the commit itself:
+
+- **`hash: files`** — always safe: the marker is only in the digest if
+  an `include` glob matches it.
+- **`hash: diff`** — safe as long as `include`/`exclude` keeps the
+  state dir out of the branch's delta. An *unscoped* diff gate (no
+  `include`) folds the marker into its own delta and self-invalidates
+  the moment it is written, exactly as `git-tree` does.
+- **`hash: git-tree`** — breaks: the commit changes HEAD and
+  invalidates the marker it just wrote.
 
 Typical fit: coverage reports, image vulnerability scans — expensive,
 deterministic, and already re-running them on every push is waste

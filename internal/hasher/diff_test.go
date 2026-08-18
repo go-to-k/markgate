@@ -1,6 +1,7 @@
 package hasher
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -242,6 +243,48 @@ func TestDiff_BinaryContentGoesStale(t *testing.T) {
 	}
 }
 
+// TestDiff_ResolvingAMergeByKeepingOursStillCounts is the case the
+// base-blob half of the digest exists for. Content-only hashing cannot
+// see it: the worktree bytes are unchanged, but the branch now carries
+// its version of the file over a DIFFERENT base version, and that
+// combination was never verified.
+func TestDiff_ResolvingAMergeByKeepingOursStillCounts(t *testing.T) {
+	repo, dir := newDiffRepo(t)
+	writeFile(t, dir, "src/a.go", "MINE\na2\na3\na4\na5\n")
+	runGit(t, dir, "commit", "-qam", "my work")
+
+	h := srcDiff()
+	before := mustHash(t, h, repo)
+	beforeBytes, err := os.ReadFile(filepath.Join(dir, "src/a.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The base branch rewrites the same line, so merging conflicts.
+	runGit(t, dir, "checkout", "-q", "main")
+	writeFile(t, dir, "src/a.go", "BASE\na2\na3\na4\na5\n")
+	runGit(t, dir, "commit", "-qam", "base rewrites the same line")
+	runGit(t, dir, "checkout", "-q", "feat")
+	if out, mergeErr := runGitAllowFail(dir, "merge", "--no-edit", "main"); mergeErr == nil {
+		t.Fatalf("fixture broken: the merge was expected to conflict\n%s", out)
+	}
+	runGit(t, dir, "checkout", "--ours", "--", "src/a.go")
+	runGit(t, dir, "add", "src/a.go")
+	runGit(t, dir, "commit", "-qm", "resolve by keeping ours")
+
+	afterBytes, err := os.ReadFile(filepath.Join(dir, "src/a.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeBytes, afterBytes) {
+		t.Fatalf("fixture broken: worktree content changed, so the test would pass on content alone\nbefore=%q after=%q", beforeBytes, afterBytes)
+	}
+
+	if after := mustHash(t, h, repo); before == after {
+		t.Error("keeping ours over a moved base did not invalidate the digest")
+	}
+}
+
 func TestDiff_OnBaseBranchErrors(t *testing.T) {
 	repo, dir := newDiffRepo(t)
 	runGit(t, dir, "checkout", "-q", "main")
@@ -308,6 +351,13 @@ func TestDiff_MissingBaseErrors(t *testing.T) {
 // is filtered with doublestar rather than handed to git as a pathspec:
 // git's default pathspec magic reads `src/*.go` as matching across
 // directory boundaries and `src/**/*.go` as NOT matching `src/a.go`.
+//
+// The guarantee is about PATTERN SEMANTICS, and holds for a non-empty
+// include list over paths that exist in the worktree. The two modes
+// select from different universes — `files` globs the filesystem,
+// `diff` filters the branch's delta — so they legitimately differ
+// where those universes do; the two cases that produces are pinned by
+// the tests immediately below rather than papered over here.
 func TestDiff_ScopeMatchesFilesHasher(t *testing.T) {
 	repo, dir := newDiffRepo(t)
 	writeFile(t, dir, "src/deep/nested/c.go", "c\n")
@@ -350,6 +400,63 @@ func TestDiff_ScopeMatchesFilesHasher(t *testing.T) {
 		}
 		if !equalStrings(want, got) {
 			t.Errorf("include=%v exclude=%v: files scope %v, diff scope %v", tc.include, tc.exclude, want, got)
+		}
+	}
+}
+
+// TestDiff_EmptyIncludeCoversTheWholeDelta pins one of the two
+// deliberate divergences: an omitted include is a legal diff config
+// meaning "everything I changed", whereas `hash: files` rejects it at
+// validation (it would have nothing to glob).
+func TestDiff_EmptyIncludeCoversTheWholeDelta(t *testing.T) {
+	repo, dir := newDiffRepo(t)
+	writeFile(t, dir, "src/a.go", "mine\n")
+	writeFile(t, dir, "docs/x.md", "mine too\n")
+	runGit(t, dir, "commit", "-qam", "my work")
+
+	scope, err := (Diff{Base: "main"}).Scope(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalStrings(scope, []string{"docs/x.md", "src/a.go"}) {
+		t.Errorf("unscoped diff scope = %v, want the whole delta", scope)
+	}
+
+	// Excluding without including is equally legal and subtracts from
+	// that whole-delta default.
+	scope, err = (Diff{Exclude: []string{"docs/**"}, Base: "main"}).Scope(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalStrings(scope, []string{"src/a.go"}) {
+		t.Errorf("exclude-only diff scope = %v, want the delta minus docs", scope)
+	}
+}
+
+// TestDiff_DeletedPathStaysInScope pins the other divergence: `files`
+// globs the filesystem, so a deleted path simply vanishes from its
+// scope, while `diff` must keep it — a branch that deletes an in-scope
+// file has certainly changed what the gate verified.
+func TestDiff_DeletedPathStaysInScope(t *testing.T) {
+	repo, dir := newDiffRepo(t)
+	runGit(t, dir, "rm", "-q", "src/b.go")
+	runGit(t, dir, "commit", "-qm", "delete an in-scope file")
+
+	diffScope, err := (Diff{Include: []string{"src/**"}, Base: "main"}).Scope(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalStrings(diffScope, []string{"src/b.go"}) {
+		t.Errorf("diff scope = %v, want the deleted path", diffScope)
+	}
+
+	filesScope, err := (Files{Include: []string{"src/**"}}).Scope(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range filesScope {
+		if p == "src/b.go" {
+			t.Error("files scope unexpectedly contains the deleted path")
 		}
 	}
 }

@@ -26,6 +26,16 @@ func newTestRepo(t *testing.T) (*gitutil.Repo, string) {
 	return gitutil.New(dir), dir
 }
 
+// runGitAllowFail is runGit for commands whose failure is the point
+// (a conflicting merge), returning the combined output and the error
+// instead of failing the test.
+func runGitAllowFail(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

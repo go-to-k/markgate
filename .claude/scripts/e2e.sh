@@ -3,9 +3,15 @@
 #
 # Covers (a) the original primitives — set / verify / clear / run /
 # init / version, default key, --hash files + --include, --state-dir
-# override, env-var override — and (b) the six features added in the
+# override, env-var override — (b) the six features added in the
 # 2026-05-09 batch: shell completion, config lint, TTL, --explain,
-# bare status, and gate dependencies (composes / requires).
+# bare status, and gate dependencies (composes / requires) — and
+# (c) the hash: diff strategy (#68): base-branch churn staying fresh,
+# same-file churn going stale, the empty-delta and unresolvable-base
+# refusals, flag and config validation.
+#
+# The assertion COUNT is printed by the summary and deliberately not
+# repeated in prose anywhere: it drifted by 14 the last time it was.
 #
 # This script is invoked manually via the `verify-e2e` skill and
 # automatically by the e2e-pre-merge hook (which wraps it in
@@ -650,9 +656,12 @@ assert_contains "diff: base-branch error names hash=diff" "hash=diff" "$out"
 out=$($MG set integ 2>&1)
 assert_eq "diff: set on the base branch errors exit=2" "2" "$?"
 
-# Bare status keeps listing instead of aborting on the unusable gate.
+# Bare status keeps listing instead of aborting on the unusable gate:
+# the healthy gate must still appear alongside the refusing one.
+$MG set healthy --hash files --include "src/**" >/dev/null 2>&1
 out=$($MG status 2>&1)
-assert_contains "diff: bare status still renders the row" "integ" "$out"
+assert_contains "diff: bare status still renders the diff row" "integ" "$out"
+assert_contains "diff: bare status keeps rendering other gates" "healthy" "$out"
 
 git checkout -q feat
 out=$($MG verify integ --base origin/never-fetched 2>&1)
@@ -661,8 +670,11 @@ assert_contains "diff: unresolvable base names the ref" "never-fetched" "$out"
 
 $MG set flagged --hash diff --base main >/dev/null 2>&1
 assert_eq "diff: --hash diff --base flags exit=0" "0" "$?"
-$MG set flagless --hash diff >/dev/null 2>&1
+out=$($MG set flagless --hash diff 2>&1)
 assert_eq "diff: --hash diff without --base exit=2" "2" "$?"
+# Names the flag, so the assertion still fails if the eager validation
+# is removed and the error arrives later from merge-base resolution.
+assert_contains "diff: missing --base names the flag" "requires --base" "$out"
 $MG set nondiff --base main >/dev/null 2>&1
 assert_eq "diff: --base without hash=diff exit=2" "2" "$?"
 
