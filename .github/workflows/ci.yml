@@ -57,3 +57,8 @@ jobs:
           filter_mode: nofilter
           golangci_lint_flags: "--config=.golangci.yml"
           fail_level: error
+          # Keep in step with GOLANGCI_LINT_VERSION in the Makefile. The
+          # action otherwise floats, so CI and `make lint` can disagree
+          # about which linters even exist — the point of running lint
+          # locally is that it predicts this job.
+          golangci_lint_version: "v2.12.2"

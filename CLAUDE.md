@@ -95,6 +95,10 @@ go test ./...         # full test suite (CLI tests spawn real git repos)
 go vet ./...          # basic misuse check
 make lint             # golangci-lint with govet shadow + gocritic +
                       # staticcheck + gosec + etc. Mirrors CI.
+                      # Runs a pinned version via `go run`, so it needs
+                      # no local install and cannot drift from
+                      # .golangci.yml (which is v2-format: a v1 binary
+                      # exits with a config error and lints nothing).
 ```
 
 Before reporting a task complete, run `go test ./... && make lint`.

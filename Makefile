@@ -26,8 +26,15 @@ test_view:
 	go tool cover -func=cover.out
 	go tool cover -html=cover.out -o cover.html
 
+# Pinned rather than "whatever is on $PATH": .golangci.yml is v2-format,
+# so a v1 binary exits with a config error and lints nothing. That failure
+# reads like a repo problem, not "your lint did not run", which is the
+# wrong way for this to fail given CLAUDE.md requires it before pushing.
+# Keep in step with golangci_lint_version in .github/workflows/ci.yml.
+GOLANGCI_LINT_VERSION := v2.12.2
+
 lint:
-	golangci-lint run
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run
 
 run:
 	go mod tidy
