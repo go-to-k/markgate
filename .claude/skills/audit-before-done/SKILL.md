@@ -1,6 +1,6 @@
 ---
 name: audit-before-done
-description: Pre-push / pre-done-declaration discipline for markgate. Covers implementation anti-patterns (no churn, no silent deletion), a widened proactive audit (grep every introduced name, check --help output, smoke the built binary, run make lint — go vet is not enough), and the post-merge manual smoke pattern. Use whenever you're about to say "done", mark a task complete, push a branch, create a PR, or ask for merge. Companion to `iterate-design`, which covers the pre-code design phase.
+description: Pre-push / pre-done-declaration discipline for markgate. Covers implementation anti-patterns (no churn, no silent deletion), a widened proactive audit (grep every introduced name, check --help output, smoke the built binary, mutation-test every check you add, run make lint — go vet is not enough), why a self-audit is not a review, and the post-merge manual smoke pattern. Use whenever you're about to say "done", mark a task complete, push a branch, create a PR, or ask for merge. Companion to `iterate-design`, which covers the pre-code design phase.
 ---
 
 # audit-before-done
@@ -85,11 +85,55 @@ lens:
 - Cross-check claims that point at other sections: if the Why
   section says "four passes, one change", are all four passes
   actually wired up, or is one of them aspirational?
+- **Delete each check you added and confirm a test fails.** A suite
+  that stays green without your check is not protecting it. Over one
+  session that was true of eight checks, one of which reintroduced
+  the very bug its PR closed while `go test ./...` and the e2e smoke
+  both stayed green. Do it on a copy
+  (`git archive HEAD | tar -x -C /tmp/...`), never the worktree.
+  The same pass catches assertions that never reach the code they
+  name — a test calling `Scope` when the check lives in `Hash`, an
+  exit-code assertion on a flag the command does not register, a
+  fixture seeded *after* the precondition broke so the file never
+  existed. Three separate cases in that session, all invisible until
+  the mutation. Mutate in both directions when the change has one:
+  a guard that must fire, and must not fire on the legitimate case.
 
 Report the result — "no gaps after N checks" or "one stale link,
 fixing" — in the same message that announces completion. If the
 user then finds something the audit missed, that's a signal the
 checklist above needs a new entry.
+
+## A self-audit is not a review
+
+Phase 4 is a *self*-audit, and it keeps growing because self-audits
+keep coming back clean while something is still wrong. Over one
+session it reported "no gaps" five times; an independent reviewer
+found a real defect all five, including a blocker that broke the
+exact workflow the README recommends.
+
+So for anything that changes behavior, get an independent review
+before asking for merge — a subagent with `isolation: "worktree"`,
+briefed to *verify claims by running things* rather than read the
+diff, and told the author judged its own work. Hand it the failure
+modes to hunt, not a summary of what you did.
+
+Two things make the difference, and neither is available to you on
+your own work:
+
+- It re-derives your claims instead of checking them off. Numbers in
+  a PR body are claims: a "142ms -> 58ms" in that session came from
+  a different fixture and did not reproduce.
+- It has no stake in the design holding, so it probes the case you
+  had already decided was fine. That is where the blocker was — a
+  scope that empties out *after* a marker exists, which the
+  bootstrapping test covered only in the no-marker half.
+
+The bar for filing what it finds does not move because you wrote the
+code. Having just authored something is a reason to file, not to
+wait for more occurrences — "only twice so far" was used to defer a
+report in that session and was wrong on the numbers (twice out of
+two opportunities, mechanism already understood).
 
 ## Mirror what CI runs, locally
 
@@ -112,6 +156,13 @@ rate — shadow declarations, unused variables, unchecked errors,
 and format-string mismatches. If you only ran `go test && go vet`
 and `make lint` is still unproven, the CI run is the audit, which
 is too late.
+
+CI also validates the **PR title**
+(`amannn/action-semantic-pull-request`): the type comes from a fixed
+list, and the scope from an allowlist of `internal/` package names
+(`cli`, `config`, `gitutil`, `hasher`, `key`, `state`, plus `deps`
+and `run`). A change under `.claude/` has no matching scope — use
+no scope rather than inventing one. `chore(hooks):` fails.
 
 ## Post-merge: manual smoke
 
