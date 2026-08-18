@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +54,30 @@ func runCmdStderr(t *testing.T, args ...string) (int, string, string) {
 	// Mirrors Execute(): unknown errors (e.g. cobra Args validation
 	// rejections) map to exit code 2.
 	return 2, stdout.String(), stderr.String()
+}
+
+// runCmdMsg is runCmd plus the error text: Execute prints it to stderr in
+// a real process, so the harness surfaces it here instead. Used by tests
+// that assert an error explains itself, not merely that it happened.
+func runCmdMsg(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	root := newRootCmd("test")
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs(args)
+
+	err := root.Execute()
+	if err == nil {
+		return 0, ""
+	}
+	var ee *ExitError
+	if errors.As(err, &ee) {
+		if ee.Err == nil {
+			return ee.Code, ""
+		}
+		return ee.Code, ee.Err.Error()
+	}
+	return 2, err.Error()
 }
 
 // initRepo creates a fresh repo in a temp dir, chdirs into it (auto-
@@ -1863,5 +1889,593 @@ func TestStatus_BareRecursesThroughRequires(t *testing.T) {
 	}
 	if !strings.Contains(parentLine, "child child is stale") {
 		t.Errorf("parent row note should mention stale child, got: %q", parentLine)
+	}
+}
+
+// gitIn runs a git command inside dir, failing the test on error. Diff-gate
+// tests need real branches, which initRepo alone does not provide.
+func gitIn(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+const diffGateConfig = "gates:\n  integ:\n    hash: diff\n    base: main\n    include:\n      - \"src/**\"\n"
+
+// initDiffRepo seeds a repo with an in-scope src/ tree on main, then
+// checks out a feature branch carrying one committed change.
+func initDiffRepo(t *testing.T) string {
+	t.Helper()
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a1\na2\na3\na4\na5\n")
+	writeRepoFile(t, dir, "src/b.go", "b1\nb2\nb3\nb4\nb5\n")
+	writeRepoFile(t, dir, "docs/x.md", "x\n")
+	writeRepoFile(t, dir, ".markgate.yml", diffGateConfig)
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	gitIn(t, dir, "checkout", "-q", "-b", "feat")
+	writeRepoFile(t, dir, "src/a.go", "a1\nMINE\na3\na4\na5\n")
+	gitIn(t, dir, "commit", "-qam", "my work")
+	return dir
+}
+
+func TestDiffHash_UnrelatedBaseBranchChangeStaysFresh(t *testing.T) {
+	dir := initDiffRepo(t)
+	if code, _ := runCmd(t, "set", "integ"); code != 0 {
+		t.Fatalf("set: code = %d, want 0", code)
+	}
+
+	gitIn(t, dir, "checkout", "-q", "main")
+	writeRepoFile(t, dir, "src/b.go", "b1\nb2\nb3\nb4\nBASE\n")
+	gitIn(t, dir, "commit", "-qam", "unrelated base work")
+	gitIn(t, dir, "checkout", "-q", "feat")
+	gitIn(t, dir, "merge", "-q", "--no-edit", "main")
+
+	if code, _ := runCmd(t, "verify", "integ"); code != 0 {
+		t.Errorf("verify after unrelated base merge: code = %d, want 0 (still fresh)", code)
+	}
+}
+
+func TestDiffHash_SameFileBaseBranchChangeGoesStale(t *testing.T) {
+	dir := initDiffRepo(t)
+	if code, _ := runCmd(t, "set", "integ"); code != 0 {
+		t.Fatalf("set: code = %d, want 0", code)
+	}
+
+	gitIn(t, dir, "checkout", "-q", "main")
+	writeRepoFile(t, dir, "src/a.go", "a1\na2\na3\na4\nBASE\n")
+	gitIn(t, dir, "commit", "-qam", "base touches the same file")
+	gitIn(t, dir, "checkout", "-q", "feat")
+	gitIn(t, dir, "merge", "-q", "--no-edit", "main")
+
+	if code, _ := runCmd(t, "verify", "integ"); code != 1 {
+		t.Errorf("verify after same-file base merge: code = %d, want 1 (stale)", code)
+	}
+}
+
+func TestDiffHash_UncommittedInScopeEditGoesStale(t *testing.T) {
+	dir := initDiffRepo(t)
+	if code, _ := runCmd(t, "set", "integ"); code != 0 {
+		t.Fatalf("set: code = %d, want 0", code)
+	}
+	writeRepoFile(t, dir, "src/a.go", "a1\nMINE AGAIN\na3\na4\na5\n")
+	if code, _ := runCmd(t, "verify", "integ"); code != 1 {
+		t.Errorf("verify after uncommitted in-scope edit: code = %d, want 1", code)
+	}
+}
+
+func TestDiffHash_OutOfScopeEditStaysFresh(t *testing.T) {
+	dir := initDiffRepo(t)
+	if code, _ := runCmd(t, "set", "integ"); code != 0 {
+		t.Fatalf("set: code = %d, want 0", code)
+	}
+	writeRepoFile(t, dir, "docs/x.md", "edited outside the include set\n")
+	gitIn(t, dir, "commit", "-qam", "docs")
+	if code, _ := runCmd(t, "verify", "integ"); code != 0 {
+		t.Errorf("verify after out-of-scope edit: code = %d, want 0", code)
+	}
+}
+
+// TestDiffHash_BaseBranchErrors covers the degenerate case the whole hash
+// type turns on: with an empty delta the digest is a constant, so verify
+// and set both refuse rather than reporting a freshness that can never
+// expire. Exit 2 (error), not 0 (silent pass) and not a files-mode
+// fallback.
+func TestDiffHash_BaseBranchErrors(t *testing.T) {
+	dir := initDiffRepo(t)
+	gitIn(t, dir, "checkout", "-q", "main")
+
+	code, msg := runCmdMsg(t, "verify", "integ")
+	if code != 2 {
+		t.Errorf("verify on base branch: code = %d, want 2", code)
+	}
+	if !strings.Contains(msg, "hash=diff") {
+		t.Errorf("verify on base branch: error = %q, want it to name hash=diff", msg)
+	}
+	if setCode, _ := runCmd(t, "set", "integ"); setCode != 2 {
+		t.Errorf("set on base branch: code = %d, want 2", setCode)
+	}
+	markerPath := filepath.Join(dir, ".git", "markgate", "integ.json")
+	if _, err := os.Stat(markerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("set on base branch wrote a marker at %s (err = %v)", markerPath, err)
+	}
+}
+
+// TestDiffHash_FreshBranchWithUncommittedWorkIsUsable is the flip side of
+// the check above: markgate's core flow runs gates BEFORE the first
+// commit, where HEAD still equals the merge base but the delta is not
+// empty. That must work, otherwise a diff gate could never guard a
+// pre-commit hook.
+func TestDiffHash_FreshBranchWithUncommittedWorkIsUsable(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a\n")
+	writeRepoFile(t, dir, ".markgate.yml", diffGateConfig)
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	gitIn(t, dir, "checkout", "-q", "-b", "feat")
+	writeRepoFile(t, dir, "src/a.go", "uncommitted work\n")
+
+	if code, _ := runCmd(t, "set", "integ"); code != 0 {
+		t.Fatalf("set on fresh branch with uncommitted work: code = %d, want 0", code)
+	}
+	if code, _ := runCmd(t, "verify", "integ"); code != 0 {
+		t.Errorf("verify: code = %d, want 0", code)
+	}
+	writeRepoFile(t, dir, "src/a.go", "more work\n")
+	if code, _ := runCmd(t, "verify", "integ"); code != 1 {
+		t.Errorf("verify after further edit: code = %d, want 1", code)
+	}
+}
+
+func TestDiffHash_UnresolvableBaseErrors(t *testing.T) {
+	dir := initDiffRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  integ:\n    hash: diff\n    base: origin/never-fetched\n    include:\n      - \"src/**\"\n")
+
+	code, msg := runCmdMsg(t, "verify", "integ")
+	if code != 2 {
+		t.Errorf("verify with unresolvable base: code = %d, want 2", code)
+	}
+	if !strings.Contains(msg, "never-fetched") {
+		t.Errorf("error = %q, want it to name the unresolvable ref", msg)
+	}
+	if setCode, _ := runCmd(t, "set", "integ"); setCode != 2 {
+		t.Errorf("set with unresolvable base: code = %d, want 2", setCode)
+	}
+	markerPath := filepath.Join(dir, ".git", "markgate", "integ.json")
+	if _, err := os.Stat(markerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("set with unresolvable base wrote a marker at %s (err = %v)", markerPath, err)
+	}
+}
+
+func TestDiffHash_ConfigRequiresBase(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  integ:\n    hash: diff\n    include:\n      - \"src/**\"\n")
+	if code, _ := runCmd(t, "verify", "integ"); code != 2 {
+		t.Errorf("hash=diff without base: code = %d, want 2", code)
+	}
+	if code, out := runCmd(t, "config", "lint"); code != 1 || !strings.Contains(out, "hash=diff requires a base ref") {
+		t.Errorf("lint: code = %d, out = %q", code, out)
+	}
+}
+
+func TestDiffHash_BaseOnNonDiffGateIsAConfigError(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  check:\n    hash: files\n    base: main\n    include:\n      - \"src/**\"\n")
+	if code, _ := runCmd(t, "verify", "check"); code != 2 {
+		t.Errorf("base on hash=files: code = %d, want 2", code)
+	}
+	if code, out := runCmd(t, "config", "lint"); code != 1 || !strings.Contains(out, "base is only valid with hash=diff") {
+		t.Errorf("lint: code = %d, out = %q", code, out)
+	}
+}
+
+func TestDiffHash_Flags(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	gitIn(t, dir, "checkout", "-q", "-b", "feat")
+	writeRepoFile(t, dir, "src/a.go", "mine\n")
+	gitIn(t, dir, "commit", "-qam", "my work")
+
+	// The message matters as much as the code here: without the eager
+	// validation both of these still exit 2, just later and with an
+	// error that names neither the flag nor the mistake.
+	if code, msg := runCmdMsg(t, "set", "check", "--hash", "diff"); code != 2 || !strings.Contains(msg, "requires --base") {
+		t.Errorf("--hash diff without --base: code = %d, msg = %q", code, msg)
+	}
+	if code, _ := runCmd(t, "set", "check", "--hash", "diff", "--base", "main"); code != 0 {
+		t.Error("--hash diff --base main: want code 0")
+	}
+	if code, _ := runCmd(t, "verify", "check", "--hash", "diff", "--base", "main"); code != 0 {
+		t.Error("verify with the same flags: want code 0")
+	}
+	if code, msg := runCmdMsg(t, "set", "check", "--base", "main"); code != 2 || !strings.Contains(msg, "base is only valid with hash=diff") {
+		t.Errorf("--base without hash=diff: code = %d, msg = %q", code, msg)
+	}
+}
+
+// TestDiffHash_MarkerRecordsBase pins the diagnostics `status` needs to
+// explain a diff gate: which ref it measures from, and where the merge
+// base sat when the marker was written.
+func TestDiffHash_MarkerRecordsBase(t *testing.T) {
+	dir := initDiffRepo(t)
+	if code, _ := runCmd(t, "set", "integ"); code != 0 {
+		t.Fatalf("set: code = %d", code)
+	}
+
+	code, out := runCmd(t, "status", "integ")
+	if code != 0 {
+		t.Fatalf("status: code = %d, out = %q", code, out)
+	}
+	if !strings.Contains(out, "hash type:  diff") || !strings.Contains(out, "base:       main") {
+		t.Errorf("status text missing base info: %q", out)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".git", "markgate", "integ.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Base      string `json:"base"`
+		MergeBase string `json:"merge_base"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Base != "main" || len(m.MergeBase) != 40 {
+		t.Errorf("marker base = %q, merge_base = %q", m.Base, m.MergeBase)
+	}
+}
+
+// TestDiffHash_BareStatusDegradesInsteadOfAborting keeps the "show me
+// every gate" view usable from the base branch: the offending row reports
+// the reason, the other rows still render.
+func TestDiffHash_BareStatusDegradesInsteadOfAborting(t *testing.T) {
+	dir := initDiffRepo(t)
+	writeRepoFile(t, dir, ".markgate.yml", diffGateConfig+"  other:\n    hash: files\n    include:\n      - \"src/**\"\n")
+	gitIn(t, dir, "commit", "-qam", "add a second gate")
+	if code, _ := runCmd(t, "set", "other"); code != 0 {
+		t.Fatalf("set other: code = %d", code)
+	}
+	// A clean base-branch checkout: the delta is empty, so the diff gate
+	// cannot produce a meaningful digest.
+	gitIn(t, dir, "checkout", "-q", "main")
+
+	code, out := runCmd(t, "status")
+	if code != 1 {
+		t.Errorf("bare status on base branch: code = %d, want 1", code)
+	}
+	if !strings.Contains(out, "other") {
+		t.Errorf("bare status dropped the healthy row: %q", out)
+	}
+	if !strings.Contains(out, "hash=diff") {
+		t.Errorf("bare status did not explain the diff row: %q", out)
+	}
+}
+
+// TestDiffHash_RunSkipsThenRunsAfterInScopeEdit exercises the sugar path
+// end to end: a hit skips the child, an in-scope edit re-runs it.
+func TestDiffHash_RunSkipsThenRunsAfterInScopeEdit(t *testing.T) {
+	dir := initDiffRepo(t)
+	stamp := filepath.Join(dir, "ran.txt")
+
+	if code, _ := runCmd(t, "run", "integ", "--", "touch", stamp); code != 0 {
+		t.Fatalf("first run: code = %d", code)
+	}
+	if _, err := os.Stat(stamp); err != nil {
+		t.Fatalf("child did not run: %v", err)
+	}
+	if err := os.Remove(stamp); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := runCmd(t, "run", "integ", "--", "touch", stamp); code != 0 {
+		t.Fatalf("second run: code = %d", code)
+	}
+	if _, err := os.Stat(stamp); !errors.Is(err, os.ErrNotExist) {
+		t.Error("child ran again despite a fresh marker")
+	}
+
+	writeRepoFile(t, dir, "src/a.go", "a1\nCHANGED\na3\na4\na5\n")
+	if code, _ := runCmd(t, "run", "integ", "--", "touch", stamp); code != 0 {
+		t.Fatalf("third run: code = %d", code)
+	}
+	if _, err := os.Stat(stamp); err != nil {
+		t.Errorf("child did not re-run after an in-scope edit: %v", err)
+	}
+}
+
+// TestDiffHash_ExplainListsDelta checks the --explain scope listing is the
+// delta, not the whole include set: docs/x.md is in neither, and src/b.go
+// is in the include set but untouched by this branch.
+func TestDiffHash_ExplainListsDelta(t *testing.T) {
+	initDiffRepo(t)
+	code, _, stderr := runCmdStderr(t, "status", "integ", "--explain")
+	if code != 1 {
+		t.Fatalf("status --explain before set: code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "src/a.go") {
+		t.Errorf("scope missing the changed file: %q", stderr)
+	}
+	if strings.Contains(stderr, "src/b.go") {
+		t.Errorf("scope included an untouched in-include file: %q", stderr)
+	}
+}
+
+// setGitConfigEnv injects git configuration for the duration of t via
+// GIT_CONFIG_COUNT, which outranks the repo's own config file and is
+// how a hostile-but-legal user setting is simulated.
+func setGitConfigEnv(t *testing.T, settings ...[2]string) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_COUNT", strconv.Itoa(len(settings)))
+	for i, kv := range settings {
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_KEY_%d", i), kv[0])
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_VALUE_%d", i), kv[1])
+	}
+}
+
+func markerDigest(t *testing.T, dir, key string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, ".git", "markgate", key+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Digest string `json:"digest"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m.Digest
+}
+
+// TestDiffHash_SubdirectoryInvocationKeepsRepoScope pins the invariant
+// that a gate covers the same files wherever it is invoked from. git
+// scopes its path output to the cwd subtree and, under diff.relative,
+// prints paths relative to it — which filtered down to an empty delta,
+// recorded the digest of the empty set, and left the gate returning
+// "fresh" for every subsequent change.
+func TestDiffHash_SubdirectoryInvocationKeepsRepoScope(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "docs/x.md", "x1\n")
+	writeRepoFile(t, dir, "src/a.go", "a1\n")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  d:\n    hash: diff\n    base: main\n    include:\n      - \"docs/**\"\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	gitIn(t, dir, "checkout", "-q", "-b", "feat")
+	writeRepoFile(t, dir, "docs/x.md", "x2 mine\n")
+	gitIn(t, dir, "commit", "-qam", "my work")
+
+	setGitConfigEnv(t, [2]string{"diff.relative", "true"})
+
+	if code, _ := runCmd(t, "set", "d"); code != 0 {
+		t.Fatalf("set from repo root: code = %d", code)
+	}
+	fromRoot := markerDigest(t, dir, "d")
+
+	t.Chdir(filepath.Join(dir, "docs"))
+	if code, _ := runCmd(t, "set", "d"); code != 0 {
+		t.Fatalf("set from subdirectory: code = %d", code)
+	}
+	if fromSubdir := markerDigest(t, dir, "d"); fromSubdir != fromRoot {
+		t.Errorf("digest depends on cwd: root %s, docs/ %s", fromRoot, fromSubdir)
+	}
+
+	_, _, stderr := runCmdStderr(t, "verify", "d", "--explain")
+	if !strings.Contains(stderr, "docs/x.md") {
+		t.Errorf("scope from a subdirectory = %q, want the repo-relative path docs/x.md", stderr)
+	}
+
+	writeRepoFile(t, dir, "docs/x.md", "x3 more\n")
+	if code, _ := runCmd(t, "verify", "d"); code != 1 {
+		t.Errorf("in-scope change seen from a subdirectory: code = %d, want 1 (0 means the marker can never go stale)", code)
+	}
+}
+
+// TestGitTreeHash_SubdirectoryInvocationSeesWholeRepo covers the same
+// cwd dependence on the default hash type, where `ls-files --others`
+// silently stopped at the cwd subtree with no git config involved.
+func TestGitTreeHash_SubdirectoryInvocationSeesWholeRepo(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "docs/x.md", "x\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+
+	t.Chdir(filepath.Join(dir, "docs"))
+	if code, _ := runCmd(t, "set", "check"); code != 0 {
+		t.Fatalf("set: code = %d", code)
+	}
+
+	writeRepoFile(t, dir, "src/NEW.txt", "untracked, outside cwd\n")
+	if code, _ := runCmd(t, "verify", "check"); code != 1 {
+		t.Errorf("untracked file outside cwd: code = %d, want 1", code)
+	}
+}
+
+// TestDiffHash_RunRefusesBeforeExecutingChild pins the reason Preflight
+// exists. `run` guards work that is expensive by assumption, so a gate
+// that cannot record its result must refuse first, not after.
+func TestDiffHash_RunRefusesBeforeExecutingChild(t *testing.T) {
+	dir := initDiffRepo(t)
+	stamp := filepath.Join(dir, "child-ran.txt")
+
+	gitIn(t, dir, "checkout", "-q", "main")
+	if code, _ := runCmd(t, "run", "integ", "--", "touch", stamp); code != 2 {
+		t.Errorf("run on the base branch: code = %d, want 2", code)
+	}
+	if _, err := os.Stat(stamp); !errors.Is(err, os.ErrNotExist) {
+		t.Error("run executed its child on the base branch")
+	}
+
+	gitIn(t, dir, "checkout", "-q", "feat")
+	code, _ := runCmd(t, "run", "integ", "--base", "origin/never-fetched", "--", "touch", stamp)
+	if code != 2 {
+		t.Errorf("run with an unresolvable base: code = %d, want 2", code)
+	}
+	if _, err := os.Stat(stamp); !errors.Is(err, os.ErrNotExist) {
+		t.Error("run executed its child with an unresolvable base")
+	}
+}
+
+// TestDiffHash_EmptyInScopeDeltaWarnsButStaysUsable is the deliberate
+// non-refusal: a branch that changes nothing the gate covers is exactly
+// the case this hash type exists to keep fresh, so it must not error —
+// but the constant digest is also what a typo'd include produces, so it
+// is announced rather than recorded silently.
+func TestDiffHash_EmptyInScopeDeltaWarnsButStaysUsable(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a\n")
+	writeRepoFile(t, dir, "docs/x.md", "x\n")
+	writeRepoFile(t, dir, ".markgate.yml", diffGateConfig)
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	gitIn(t, dir, "checkout", "-q", "-b", "docs-only")
+	writeRepoFile(t, dir, "docs/x.md", "docs only change\n")
+	gitIn(t, dir, "commit", "-qam", "docs")
+
+	code, _, stderr := runCmdStderr(t, "set", "integ")
+	if code != 0 {
+		t.Fatalf("set on a branch with no in-scope changes: code = %d, want 0", code)
+	}
+	if !strings.Contains(stderr, "empty in-scope delta") {
+		t.Errorf("set stderr = %q, want an empty-delta warning", stderr)
+	}
+	if verifyCode, _ := runCmd(t, "verify", "integ"); verifyCode != 0 {
+		t.Errorf("verify: code = %d, want 0 (a branch touching nothing in scope stays fresh)", verifyCode)
+	}
+
+	writeRepoFile(t, dir, "src/a.go", "now in scope\n")
+	if verifyCode, _ := runCmd(t, "verify", "integ"); verifyCode != 1 {
+		t.Errorf("verify after an in-scope change: code = %d, want 1", verifyCode)
+	}
+}
+
+// TestDiffHash_RebaseOntoMovedBase covers the other way a branch takes
+// on base-branch work. Rebasing rewrites every commit and moves the
+// merge base, so a content-blind implementation would invalidate here.
+func TestDiffHash_RebaseOntoMovedBase(t *testing.T) {
+	dir := initDiffRepo(t)
+	if code, _ := runCmd(t, "set", "integ"); code != 0 {
+		t.Fatalf("set: code = %d", code)
+	}
+
+	gitIn(t, dir, "checkout", "-q", "main")
+	writeRepoFile(t, dir, "src/b.go", "b1\nb2\nb3\nb4\nBASE\n")
+	gitIn(t, dir, "commit", "-qam", "unrelated base work")
+	gitIn(t, dir, "checkout", "-q", "feat")
+	gitIn(t, dir, "rebase", "main")
+
+	if code, _ := runCmd(t, "verify", "integ"); code != 0 {
+		t.Errorf("verify after rebasing onto an unrelated base change: code = %d, want 0", code)
+	}
+
+	gitIn(t, dir, "checkout", "-q", "main")
+	writeRepoFile(t, dir, "src/a.go", "a1\na2\na3\na4\nBASE\n")
+	gitIn(t, dir, "commit", "-qam", "base touches my file")
+	gitIn(t, dir, "checkout", "-q", "feat")
+	gitIn(t, dir, "rebase", "main")
+
+	if code, _ := runCmd(t, "verify", "integ"); code != 1 {
+		t.Errorf("verify after rebasing onto a change to my own file: code = %d, want 1", code)
+	}
+}
+
+func TestDiffHash_WithTTL(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a\n")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  integ:\n    hash: diff\n    base: main\n    ttl: 7d\n    include:\n      - \"src/**\"\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	gitIn(t, dir, "checkout", "-q", "-b", "feat")
+	writeRepoFile(t, dir, "src/a.go", "mine\n")
+	gitIn(t, dir, "commit", "-qam", "my work")
+
+	t0 := time.Now().UTC()
+	withClock(t, t0)
+	if code, _ := runCmd(t, "set", "integ"); code != 0 {
+		t.Fatalf("set: code = %d", code)
+	}
+	withClock(t, t0.Add(3*24*time.Hour))
+	if code, _ := runCmd(t, "verify", "integ"); code != 0 {
+		t.Errorf("verify within ttl: code = %d, want 0", code)
+	}
+	withClock(t, t0.Add(8*24*time.Hour))
+	if code, _ := runCmd(t, "verify", "integ"); code != 1 {
+		t.Errorf("verify past ttl: code = %d, want 1 (ttl is the backstop for what diff deliberately ignores)", code)
+	}
+}
+
+func TestDiffHash_AsRequiresChild(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a\n")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  pre-merge:\n    requires:\n      - integ\n  integ:\n    hash: diff\n    base: main\n    include:\n      - \"src/**\"\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	gitIn(t, dir, "checkout", "-q", "-b", "feat")
+	writeRepoFile(t, dir, "src/a.go", "mine\n")
+	gitIn(t, dir, "commit", "-qam", "my work")
+
+	if code, msg := runCmdMsg(t, "set", "pre-merge"); code != 2 || !strings.Contains(msg, "integ") {
+		t.Errorf("set parent with a stale diff child: code = %d, msg = %q", code, msg)
+	}
+	if code, _ := runCmd(t, "set", "integ"); code != 0 {
+		t.Fatalf("set child: code = %d", code)
+	}
+	if code, _ := runCmd(t, "set", "pre-merge"); code != 0 {
+		t.Fatalf("set parent after the child is fresh: code = %d", code)
+	}
+	if code, _ := runCmd(t, "verify", "pre-merge"); code != 0 {
+		t.Errorf("verify parent: code = %d, want 0", code)
+	}
+
+	writeRepoFile(t, dir, "src/a.go", "changed again\n")
+	if code, _ := runCmd(t, "verify", "pre-merge"); code != 1 {
+		t.Errorf("verify parent after the child's delta moved: code = %d, want 1", code)
+	}
+
+	// A child whose base is unusable is an error, not a quiet mismatch,
+	// and it propagates through the parent.
+	gitIn(t, dir, "checkout", "-q", "--", "src/a.go")
+	gitIn(t, dir, "checkout", "-q", "main")
+	if code, msg := runCmdMsg(t, "verify", "pre-merge"); code != 2 || !strings.Contains(msg, "hash=diff") {
+		t.Errorf("verify parent from the base branch: code = %d, msg = %q, want 2 naming hash=diff", code, msg)
+	}
+}
+
+func TestDiffHash_WithStateDir(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a\n")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  integ:\n    hash: diff\n    base: main\n    state_dir: .markgate-state\n    include:\n      - \"src/**\"\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	gitIn(t, dir, "checkout", "-q", "-b", "feat")
+	writeRepoFile(t, dir, "src/a.go", "mine\n")
+	gitIn(t, dir, "commit", "-qam", "my work")
+
+	if code, _ := runCmd(t, "set", "integ"); code != 0 {
+		t.Fatalf("set: code = %d", code)
+	}
+	marker := filepath.Join(dir, ".markgate-state", "integ.json")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("marker not written to state_dir: %v", err)
+	}
+	// The marker now lives inside the worktree. It is out of the gate's
+	// include set, so committing it must not disturb the digest — this
+	// is what makes `diff` shareable the way `files` is.
+	gitIn(t, dir, "add", ".markgate-state")
+	gitIn(t, dir, "commit", "-qm", "commit the marker")
+	if code, _ := runCmd(t, "verify", "integ"); code != 0 {
+		t.Errorf("verify after committing the marker: code = %d, want 0", code)
 	}
 }

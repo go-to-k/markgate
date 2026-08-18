@@ -1,6 +1,6 @@
 ---
 name: verify-e2e
-description: Run the markgate end-to-end CLI verification script (`.claude/scripts/e2e.sh`). It exercises the full CLI surface — original primitives (set / verify / clear / run / init / version, default key, --hash files + --include, --state-dir, env-var, precedence) plus every feature added in the 2026-05-09 batch (completion, config lint, TTL, --explain, bare status, composes / requires). Wraps the script in `markgate run` so unchanged repos skip the run. Use whenever you want to confirm "all features still work" before declaring done, opening a PR, or merging — or when your changes touch the CLI surface and you want a quick smoke before pushing.
+description: Run the markgate end-to-end CLI verification script (`.claude/scripts/e2e.sh`). It exercises the full CLI surface — original primitives (set / verify / clear / run / init / version, default key, --hash files + --include, --state-dir, env-var, precedence) plus every feature added in the 2026-05-09 batch (completion, config lint, TTL, --explain, bare status, composes / requires) and the hash: diff strategy. Wraps the script in `markgate run` so unchanged repos skip the run. Use whenever you want to confirm "all features still work" before declaring done, opening a PR, or merging — or when your changes touch the CLI surface and you want a quick smoke before pushing.
 ---
 
 # verify-e2e
@@ -28,9 +28,9 @@ the manual entry point and a good rehearsal step before pushing.
 
 ## What it covers
 
-84 assertions across two layers:
+Three layers of assertions (the script prints the count on every run; it is deliberately not restated here, because a number copied into prose drifts):
 
-**Pre-existing primitives (33 assertions)**
+**Core primitives**
 
 - `set` / `verify` / `clear` cycle including `clear` idempotency
 - Default key (no positional arg) → `default`
@@ -43,7 +43,7 @@ the manual entry point and a good rehearsal step before pushing.
 - `init` writes `.markgate.yml` and is non-clobbering
 - `version` prints something
 
-**2026-05-09 batch features (51 assertions)**
+**2026-05-09 batch features**
 
 - `completion`: bash script emit, unknown-shell exit=2, dynamic
   gate-key completion via `__complete`
@@ -61,13 +61,30 @@ the manual entry point and a good rehearsal step before pushing.
 - Config-load errors: cycle / missing child / both fields set
   all reject at exit=2
 
+**`hash: diff`**
+
+- set / verify on a branch ahead of the base; `status` records the
+  base ref and the resolved merge base
+- unrelated base-branch change merged in -> still fresh; a change to
+  a file the branch also touched -> stale
+- uncommitted in-scope edit / untracked in-scope file -> stale;
+  out-of-scope edit -> fresh
+- clean base-branch checkout -> `verify` and `set` both exit=2
+  naming `hash=diff`; bare `status` degrades the row instead of
+  aborting the listing
+- unresolvable base -> exit=2 naming the ref
+- `--hash diff --base` flags; `--hash diff` without `--base` and
+  `--base` without `hash=diff` both exit=2
+- config without `base` rejected; `base` on a `files` gate lints
+  dirty with an explanatory message
+
 ## How it caches
 
 The hook wraps the script in `go run ./cmd/markgate run
 hook-e2e-pre-merge -- bash .claude/scripts/e2e.sh`, so:
 
 - **First run after a source change**: full ~10–15s execution
-  (build + 84 assertions, the script does its own `go build` to
+  (build + every assertion, the script does its own `go build` to
   the temp dir).
 - **Repeat run with no source change**: ~0.1s skip, marker hit.
 
@@ -78,7 +95,7 @@ any source change invalidates it.
 ## Running it
 
 ```sh
-bash .claude/scripts/e2e.sh             # full run, 84 PASS lines + summary
+bash .claude/scripts/e2e.sh             # full run, one PASS line per assertion + summary
 QUIET=1 bash .claude/scripts/e2e.sh     # only print section headers + failures
 ```
 

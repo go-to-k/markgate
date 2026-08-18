@@ -33,6 +33,7 @@ func newSetCmd() *cobra.Command {
 		if err := state.Save(c.markerPath, m); err != nil {
 			return &ExitError{Code: 2, Err: err}
 		}
+		warnEmptyDiffScope(c, cmd.ErrOrStderr())
 		fmt.Fprintf(cmd.OutOrStdout(), "marker saved: %s\n", c.key)
 		return nil
 	}

@@ -26,6 +26,7 @@ const Filename = ".markgate.yml"
 const (
 	HashGitTree = "git-tree"
 	HashFiles   = "files"
+	HashDiff    = "diff"
 )
 
 // Config mirrors the YAML document.
@@ -38,6 +39,10 @@ type Gate struct {
 	Hash    string   `yaml:"hash"`
 	Include []string `yaml:"include,omitempty"`
 	Exclude []string `yaml:"exclude,omitempty"`
+	// Base is the ref a hash=diff gate measures its delta from
+	// (e.g. origin/main). Required on hash=diff and rejected on every
+	// other hash type, where it would be a silent no-op.
+	Base string `yaml:"base,omitempty"`
 	// StateDir overrides the marker storage directory for this gate.
 	// Relative paths resolve against the repo top-level (same semantics as
 	// the --state-dir flag). Committing an absolute path is an anti-pattern
@@ -162,10 +167,23 @@ func validateGate(c *Config, name string, g Gate) []Finding {
 				Message: fmt.Sprintf("gates.%s: hash=files requires a non-empty include list", name),
 			})
 		}
+	case HashDiff:
+		if g.Base == "" {
+			out = append(out, Finding{
+				Path:    fmt.Sprintf("gates.%s", name),
+				Message: fmt.Sprintf("gates.%s: hash=diff requires a base ref (e.g. base: origin/main)", name),
+			})
+		}
 	default:
 		out = append(out, Finding{
 			Path:    fmt.Sprintf("gates.%s.hash", name),
-			Message: fmt.Sprintf("gates.%s: unknown hash %q (want %q or %q)", name, g.Hash, HashGitTree, HashFiles),
+			Message: fmt.Sprintf("gates.%s: unknown hash %q (want %q, %q or %q)", name, g.Hash, HashGitTree, HashFiles, HashDiff),
+		})
+	}
+	if g.Base != "" && g.Hash != HashDiff {
+		out = append(out, Finding{
+			Path:    fmt.Sprintf("gates.%s.base", name),
+			Message: fmt.Sprintf("gates.%s: base is only valid with hash=diff", name),
 		})
 	}
 	if g.TTL != "" {

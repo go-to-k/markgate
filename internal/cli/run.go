@@ -92,6 +92,7 @@ func runE(cmd *cobra.Command, args []string, overrides *gateFlagValues, explain 
 	if err := state.Save(c.markerPath, newM); err != nil {
 		return &ExitError{Code: 2, Err: err}
 	}
+	warnEmptyDiffScope(c, cmd.ErrOrStderr())
 	return nil
 }
 

@@ -46,6 +46,43 @@ func TestLoad_FilesRequiresInclude(t *testing.T) {
 	}
 }
 
+func TestLoad_DiffRequiresBase(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "gates:\n  integ:\n    hash: diff\n")
+	if _, err := Load(dir); err == nil {
+		t.Error("want error when base missing for diff")
+	}
+}
+
+func TestLoad_DiffOK(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "gates:\n  integ:\n    hash: diff\n    base: origin/main\n")
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := c.Gate("integ")
+	if g.Hash != HashDiff || g.Base != "origin/main" {
+		t.Errorf("Gate = %+v, want hash=%q base=origin/main", g, HashDiff)
+	}
+}
+
+// base on any other hash type is a silent no-op, which is exactly how a
+// gate ends up trusted for behavior it does not have.
+func TestLoad_BaseRejectedOnNonDiffGate(t *testing.T) {
+	for _, body := range []string{
+		"gates:\n  x:\n    hash: files\n    include:\n      - \"src/**\"\n    base: main\n",
+		"gates:\n  x:\n    hash: git-tree\n    base: main\n",
+		"gates:\n  x:\n    base: main\n",
+	} {
+		dir := t.TempDir()
+		writeConfig(t, dir, body)
+		if _, err := Load(dir); err == nil {
+			t.Errorf("want error for base on a non-diff gate: %q", body)
+		}
+	}
+}
+
 func TestLoad_UnknownHash(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, "gates:\n  x:\n    hash: bogus\n")

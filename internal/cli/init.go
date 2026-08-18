@@ -17,6 +17,7 @@ const initSkeleton = `# markgate configuration - https://github.com/go-to-k/mark
 # Define a gate here only when you want:
 #   - exclude patterns on the default git-tree hash, or
 #   - a narrow-scope (hash: files) gate for docs / Docker / coverage, or
+#   - a branch-delta (hash: diff) gate that ignores base-branch churn, or
 #   - a non-default marker storage directory (state_dir) for sharing
 #     markers across machines / CI.
 
@@ -35,12 +36,15 @@ gates:
     #   Pattern A: not committed (e.g. restored from CI cache).
     #     state_dir: .markgate-cache
     #     -> gitignore .markgate-cache/ (required if you stay on
-    #        hash: git-tree, optional hygiene for hash: files).
+    #        hash: git-tree or on an unscoped hash: diff gate,
+    #        optional hygiene for hash: files).
     #
     #   Pattern B: committed to git for zero-infra local->CI sharing.
     #     state_dir: .markgate-state
-    #     -> requires hash: files (git-tree would break: the commit
-    #        changes HEAD and stales the marker it just wrote).
+    #     -> requires a scoped hash: files or hash: diff gate whose
+    #        include/exclude keeps the state dir out of scope
+    #        (git-tree would break: the commit changes HEAD and stales
+    #        the marker it just wrote).
     #
     # See README "Sharing markers" for the full picture.
 
@@ -50,6 +54,24 @@ gates:
   #   include:
   #     - "docs/**"
   #     - "README.md"
+
+  # Example: ignore base-branch changes to files this branch has not
+  # touched (hash: diff). The digest covers only the delta against
+  # merge-base(base, HEAD), so pulling an unrelated change from the base
+  # branch keeps the marker fresh. Requires base:, and errors when the
+  # delta is empty (e.g. on the base branch itself).
+  #
+  # This is the LEAST STRICT hash type: a base-branch change your branch
+  # never touched is trusted without re-verification, so a combination
+  # that was never verified together can read as fresh. Pair it with
+  # ttl:, and only use it where the base branch runs the same gate.
+  # See README "Hashing strategies" before adopting it.
+  # integ:
+  #   hash: diff
+  #   base: origin/main
+  #   ttl: 14d
+  #   include:
+  #     - "src/**"
 
   # Example: wall-clock expiry for gates that verify external state
   # (cloud APIs, vuln DB, ...). Units: s/m/h/d/w (m is minutes, not

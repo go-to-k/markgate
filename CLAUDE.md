@@ -19,10 +19,11 @@ it is the spec — see "README as a spec" below.
   `Config.Gate(key)`).
 - `internal/state/` — marker read / write. Atomic save via temp-file +
   fsync + rename. Callers never touch files directly.
-- `internal/hasher/` — `GitTree` and `Files` strategies implement
-  `Hasher`.
+- `internal/hasher/` — `GitTree`, `Files` and `Diff` strategies
+  implement `Hasher`.
 - `internal/gitutil/` — `git rev-parse` wrappers (top-level, git-dir,
-  HEAD SHA).
+  HEAD SHA), merge-base resolution, and the raw working-tree delta a
+  `hash: diff` gate digests.
 - `internal/key/` — key syntax validation (`[a-z0-9][a-z0-9-]*`).
 
 ## Design principles
@@ -165,8 +166,8 @@ message to a temp file first sidesteps all shell escaping.
   (expensive to unwind). Exits 2 with a message pointing at the fix
   (`git checkout -b <feature-branch>`).
 - `hooks/e2e-pre-merge.sh` is a PreToolUse hook on Bash: before any
-  `gh pr merge ...` it runs `.claude/scripts/e2e.sh` (the full 84-
-  assertion CLI smoke), wrapped in `markgate run` so unchanged
+  `gh pr merge ...` it runs `.claude/scripts/e2e.sh` (the full
+  black-box CLI smoke), wrapped in `markgate run` so unchanged
   repos skip in ~0.1s. Failure exits 2 and blocks the merge. The
   same script is invokable manually via the `verify-e2e` skill.
 - `scripts/e2e.sh` is the black-box CLI smoke (built binary +
@@ -174,8 +175,10 @@ message to a temp file first sidesteps all shell escaping.
   (set / verify / clear / run / init / version, default key,
   `--hash files`, `--state-dir`, env-var, precedence) and every
   feature added in the 2026-05-09 batch (completion, config lint,
-  TTL, `--explain`, bare status, composes / requires). 84 PASS on
-  green; exit code = number of failures.
+  TTL, `--explain`, bare status, composes / requires) plus
+  `hash: diff` (#68). The script's summary prints the assertion count;
+  exit code = number of failures. Do not restate the count here — it
+  has no way to stay in sync and has already drifted once.
 
 ### How the dogfood works (no install needed)
 

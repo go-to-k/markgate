@@ -3,8 +3,10 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -45,19 +47,23 @@ type gateFlagValues struct {
 	hash     string
 	include  []string
 	exclude  []string
+	base     string
 	stateDir string
 }
 
-// addGateFlags registers --hash / --include / --exclude / --state-dir on
-// cmd and returns a pointer whose fields are populated when RunE fires.
+// addGateFlags registers --hash / --include / --exclude / --base /
+// --state-dir on cmd and returns a pointer whose fields are populated
+// when RunE fires.
 func addGateFlags(cmd *cobra.Command) *gateFlagValues {
 	v := &gateFlagValues{}
 	cmd.Flags().StringVar(&v.hash, "hash", "",
-		"override hash type for this invocation: git-tree or files")
+		"override hash type for this invocation: git-tree, files or diff")
 	cmd.Flags().StringArrayVar(&v.include, "include", nil,
 		"glob to include (repeatable); overrides config include list")
 	cmd.Flags().StringArrayVar(&v.exclude, "exclude", nil,
 		"glob to exclude (repeatable); overrides config exclude list")
+	cmd.Flags().StringVar(&v.base, "base", "",
+		"base ref a hash=diff gate measures its delta from (e.g. origin/main)")
 	cmd.Flags().StringVar(&v.stateDir, "state-dir", "",
 		"directory to store marker files; overrides "+EnvStateDir+" env and state_dir: in .markgate.yml (default: <git-dir>/markgate)")
 	return v
@@ -76,6 +82,9 @@ func (v *gateFlagValues) override(g config.Gate) config.Gate {
 	}
 	if v.exclude != nil {
 		g.Exclude = v.exclude
+	}
+	if v.base != "" {
+		g.Base = v.base
 	}
 	return g
 }
@@ -221,6 +230,13 @@ func (c *gateCtx) evaluate() (evalResult, error) {
 	m, err := state.Load(c.markerPath)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
+			// Nothing to compare against, so no digest gets computed on
+			// this path and the hasher's preconditions would go
+			// unchecked — leaving `run` to execute its child first and
+			// refuse to record the result afterwards.
+			if pErr := c.preflight(); pErr != nil {
+				return evalResult{}, pErr
+			}
 			return evalResult{reason: "no marker"}, nil
 		}
 		return evalResult{}, err
@@ -234,6 +250,11 @@ func (c *gateCtx) evaluate() (evalResult, error) {
 		// Gate flipped between own-scope and deps-only since last set;
 		// the marker is from a different freshness model. Treat it as
 		// stale so the next set rewrites it under the current model.
+		// Same reasoning as the no-marker path: this returns without
+		// hashing, so preconditions need their own check.
+		if pErr := c.preflight(); pErr != nil {
+			return evalResult{}, pErr
+		}
 		res.hashTypeChanged = true
 		res.reason = "marker kind changed"
 		return res, nil
@@ -283,6 +304,54 @@ func (c *gateCtx) evaluate() (evalResult, error) {
 	}
 	res.matched = true
 	return res, nil
+}
+
+// preflight surfaces hasher preconditions that must fail loudly even
+// when no marker exists yet. Without it a diff gate with an unusable
+// base would report a plain mismatch, `run` would execute its (by
+// assumption expensive) child, and only the closing `set` would refuse —
+// after the cost was already paid.
+//
+// Callers invoke it ONLY on paths that return without hashing: when a
+// digest is computed, Hash reports the same errors, and running both
+// would double every diff gate's git work on the hot path.
+func (c *gateCtx) preflight() error {
+	if !c.gate.HasOwnScope() {
+		// Freshness is purely the AND of children; the hasher is never
+		// consulted, so its preconditions are not this gate's business.
+		return nil
+	}
+	d, ok := c.hasher.(hasher.Diff)
+	if !ok {
+		return nil
+	}
+	return d.Preflight(c.repo)
+}
+
+// warnEmptyDiffScope reports a diff gate recording a marker whose
+// in-scope delta is empty. That digest is a constant: legitimate when
+// the branch genuinely changes nothing the gate covers (the case this
+// hash type exists to keep fresh), and the signature of a typo'd
+// include otherwise. Refusing would make the gate unusable on branches
+// it should trivially pass, so the compromise is that it is never
+// silent — the same class of mistake that made a cwd-scoped delta look
+// like a permanently fresh marker.
+func warnEmptyDiffScope(c *gateCtx, errOut io.Writer) {
+	d, ok := c.hasher.(hasher.Diff)
+	if !ok {
+		return
+	}
+	scope, err := d.Scope(c.repo)
+	if err != nil || len(scope) > 0 {
+		return
+	}
+	patterns := "(everything)"
+	if len(c.gate.Include) > 0 {
+		patterns = strings.Join(c.gate.Include, ", ")
+	}
+	fmt.Fprintf(errOut,
+		"markgate: %s: hash=diff recorded an empty in-scope delta (include: %s); this branch changes nothing the gate covers, so the marker stays fresh until it does\n",
+		c.key, patterns)
 }
 
 // staleRequiredChild returns the key of the first direct requires child
@@ -342,6 +411,9 @@ func resolveMarkerPath(overrides *gateFlagValues, gate config.Gate, topLevel, gi
 // validateGate enforces the invariants that config.validate also enforces,
 // so CLI overrides cannot construct an illegal gate.
 func validateGate(g config.Gate) error {
+	if g.Base != "" && g.Hash != config.HashDiff {
+		return fmt.Errorf("base is only valid with hash=diff (got hash=%q)", g.Hash)
+	}
 	switch g.Hash {
 	case "", config.HashGitTree:
 		return nil
@@ -350,8 +422,13 @@ func validateGate(g config.Gate) error {
 			return fmt.Errorf("hash=files requires --include or an include list in config")
 		}
 		return nil
+	case config.HashDiff:
+		if g.Base == "" {
+			return fmt.Errorf("hash=diff requires --base or a base: in config")
+		}
+		return nil
 	default:
-		return fmt.Errorf("unknown hash type %q (want %q or %q)", g.Hash, config.HashGitTree, config.HashFiles)
+		return fmt.Errorf("unknown hash type %q (want %q, %q or %q)", g.Hash, config.HashGitTree, config.HashFiles, config.HashDiff)
 	}
 }
 
@@ -424,7 +501,8 @@ func formatAge(d time.Duration) string {
 }
 
 // newMarker computes the current digest and returns a marker ready to save.
-// HEAD is recorded only for git-tree, to aid status output. CreatedAt is
+// HEAD is recorded only for git-tree, and base / merge base only for
+// diff, to aid status output. CreatedAt is
 // stamped here (via the package's now indirection) rather than left for
 // state.Save to fill in, so tests that pin the clock for TTL coverage
 // observe the pinned value. Deps-only gates (no own scope) get a marker
@@ -447,6 +525,15 @@ func newMarker(c *gateCtx) (*state.Marker, error) {
 	if _, ok := c.hasher.(hasher.GitTree); ok {
 		if head, err := c.repo.HeadSHA(); err == nil {
 			m.Head = head
+		}
+	}
+	if d, ok := c.hasher.(hasher.Diff); ok {
+		// Recorded for diagnostics only. Neither field is compared at
+		// verify time — a moved merge base is exactly what this hash
+		// type is built to tolerate.
+		m.Base = d.Base
+		if mergeBase, err := d.MergeBase(c.repo); err == nil {
+			m.MergeBase = mergeBase
 		}
 	}
 	return m, nil

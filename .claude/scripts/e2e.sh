@@ -3,9 +3,15 @@
 #
 # Covers (a) the original primitives — set / verify / clear / run /
 # init / version, default key, --hash files + --include, --state-dir
-# override, env-var override — and (b) the six features added in the
+# override, env-var override — (b) the six features added in the
 # 2026-05-09 batch: shell completion, config lint, TTL, --explain,
-# bare status, and gate dependencies (composes / requires).
+# bare status, and gate dependencies (composes / requires) — and
+# (c) the hash: diff strategy (#68): base-branch churn staying fresh,
+# same-file churn going stale, the empty-delta and unresolvable-base
+# refusals, flag and config validation.
+#
+# The assertion COUNT is printed by the summary and deliberately not
+# repeated in prose anywhere: it drifted by 14 the last time it was.
 #
 # This script is invoked manually via the `verify-e2e` skill and
 # automatically by the e2e-pre-merge hook (which wraps it in
@@ -578,6 +584,121 @@ gates:
 EOF
 $MG verify a >/dev/null 2>&1
 assert_eq "composes+requires rejected exit=2" "2" "$?"
+
+cyan "=== #68 hash: diff (base-branch churn) ==="
+new_repo
+
+printf 'l1\nl2\nl3\nl4\nl5\n' > src/a.go
+printf 'b1\nb2\nb3\nb4\nb5\n' > src/b.go
+cat > .markgate.yml <<'EOF'
+gates:
+  integ:
+    hash: diff
+    base: main
+    include:
+      - "src/**"
+EOF
+git add -A && git commit -qm "diff fixture" >/dev/null
+git checkout -q -b feat
+printf 'MINE\nl2\nl3\nl4\nl5\n' > src/a.go
+git commit -qam "my work" >/dev/null
+
+$MG set integ >/dev/null 2>&1
+assert_eq "diff: set on a branch ahead of base exit=0" "0" "$?"
+
+$MG verify integ >/dev/null 2>&1
+assert_eq "diff: verify after set exit=0" "0" "$?"
+
+out=$($MG status integ 2>&1)
+assert_contains "diff: status records the base ref" "base:       main" "$out"
+assert_contains "diff: status records the merge base" "merge base:" "$out"
+
+# An unrelated in-scope file changes on the base branch and is merged in.
+git checkout -q main
+printf 'b1\nb2\nb3\nb4\nBASE\n' > src/b.go
+git commit -qam "unrelated base work" >/dev/null
+git checkout -q feat
+git merge -q --no-edit main >/dev/null
+$MG verify integ >/dev/null 2>&1
+assert_eq "diff: unrelated base-branch change stays fresh exit=0" "0" "$?"
+
+# The base branch touches a file this branch also changed.
+git checkout -q main
+printf 'l1\nl2\nl3\nl4\nBASE\n' > src/a.go
+git commit -qam "base touches my file" >/dev/null
+git checkout -q feat
+git merge -q --no-edit main >/dev/null
+$MG verify integ >/dev/null 2>&1
+assert_eq "diff: same-file base-branch change goes stale exit=1" "1" "$?"
+
+$MG set integ >/dev/null 2>&1
+printf 'l1\nl2\nEDITED\nl4\nl5\n' > src/a.go
+$MG verify integ >/dev/null 2>&1
+assert_eq "diff: uncommitted in-scope edit exit=1" "1" "$?"
+
+$MG set integ >/dev/null 2>&1
+echo "out of scope" > docs/README.md
+$MG verify integ >/dev/null 2>&1
+assert_eq "diff: out-of-scope edit stays fresh exit=0" "0" "$?"
+
+echo "new file" > src/untracked.go
+$MG verify integ >/dev/null 2>&1
+assert_eq "diff: untracked in-scope file exit=1" "1" "$?"
+rm src/untracked.go
+git checkout -q -- docs/README.md src/a.go
+
+# Clean base-branch checkout: empty delta, constant digest -> refuse.
+git checkout -q main
+out=$($MG verify integ 2>&1)
+code=$?
+assert_eq "diff: clean base branch errors exit=2" "2" "$code"
+assert_contains "diff: base-branch error names hash=diff" "hash=diff" "$out"
+out=$($MG set integ 2>&1)
+assert_eq "diff: set on the base branch errors exit=2" "2" "$?"
+
+# Bare status keeps listing instead of aborting on the unusable gate:
+# the healthy gate must still appear alongside the refusing one.
+$MG set healthy --hash files --include "src/**" >/dev/null 2>&1
+out=$($MG status 2>&1)
+assert_contains "diff: bare status still renders the diff row" "integ" "$out"
+assert_contains "diff: bare status keeps rendering other gates" "healthy" "$out"
+
+git checkout -q feat
+out=$($MG verify integ --base origin/never-fetched 2>&1)
+assert_eq "diff: unresolvable base errors exit=2" "2" "$?"
+assert_contains "diff: unresolvable base names the ref" "never-fetched" "$out"
+
+$MG set flagged --hash diff --base main >/dev/null 2>&1
+assert_eq "diff: --hash diff --base flags exit=0" "0" "$?"
+out=$($MG set flagless --hash diff 2>&1)
+assert_eq "diff: --hash diff without --base exit=2" "2" "$?"
+# Names the flag, so the assertion still fails if the eager validation
+# is removed and the error arrives later from merge-base resolution.
+assert_contains "diff: missing --base names the flag" "requires --base" "$out"
+$MG set nondiff --base main >/dev/null 2>&1
+assert_eq "diff: --base without hash=diff exit=2" "2" "$?"
+
+cat > .markgate.yml <<'EOF'
+gates:
+  integ:
+    hash: diff
+    include:
+      - "src/**"
+EOF
+$MG verify integ >/dev/null 2>&1
+assert_eq "diff: config without base rejected exit=2" "2" "$?"
+
+cat > .markgate.yml <<'EOF'
+gates:
+  scan:
+    hash: files
+    base: main
+    include:
+      - "src/**"
+EOF
+out=$($MG config lint 2>&1)
+assert_eq "diff: base on a files gate lints dirty exit=1" "1" "$?"
+assert_contains "diff: lint explains base misuse" "base is only valid with hash=diff" "$out"
 
 # ─────────────────────────────────────────────────────────────────
 echo
