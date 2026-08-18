@@ -141,6 +141,82 @@ func newGateCtx(k string, overrides *gateFlagValues) (*gateCtx, error) {
 	}, nil
 }
 
+// clearTarget is everything `clear` needs and nothing more: which
+// marker file to remove.
+type clearTarget struct {
+	key        string
+	markerPath string
+}
+
+// newClearTarget resolves the marker path without validating the config.
+//
+// `clear` deletes a file; its only config dependency is state_dir. The
+// whole-document validation every other command inherits from
+// newGateCtx is an incidental coupling here, and an expensive one: it
+// makes the recovery path unusable in exactly the situation it exists
+// for, leaving hand-editing YAML as the only way to remove a marker —
+// including markers for gates that are perfectly fine.
+//
+// Validation is skipped, not weakened. Every command that resolves a
+// hasher still goes through Load and still refuses a bad config, so a
+// typo is still caught the next time anything is actually gated.
+func newClearTarget(k string, overrides *gateFlagValues, errOut io.Writer) (*clearTarget, error) {
+	if err := key.Validate(k); err != nil {
+		return nil, &ExitError{Code: 2, Err: err}
+	}
+	repo := gitutil.New("")
+	top, err := repo.TopLevel()
+	if err != nil {
+		return nil, &ExitError{Code: 2, Err: err}
+	}
+	gitDir, err := repo.GitDir()
+	if err != nil {
+		return nil, &ExitError{Code: 2, Err: err}
+	}
+
+	var (
+		gate       config.Gate
+		unresolved bool
+	)
+	cfg, parseErr := config.Parse(top)
+	switch {
+	case parseErr != nil:
+		unresolved = true
+	default:
+		gate = cfg.Gate(k)
+		findings := cfg.Validate()
+		switch {
+		case len(findings) > 0:
+			// Clearing must not double as a way to stop noticing the
+			// errors. Only the first is shown; lint shows the rest.
+			fmt.Fprintf(errOut, "markgate: %s still has errors (%s; see `markgate config lint`); clearing anyway\n",
+				config.Filename, findings[0].Message)
+		default:
+			// The document is fine, so anything validateGate objects to
+			// came from the flags. Rejecting it here keeps `clear` as
+			// strict about flag typos as every other command — the
+			// leniency is about the config, not about the command line.
+			if vErr := validateGate(overrides.override(gate)); vErr != nil {
+				return nil, &ExitError{Code: 2, Err: vErr}
+			}
+		}
+	}
+
+	markerPath := resolveMarkerPath(overrides, gate, top, gitDir, k)
+	if unresolved {
+		// state_dir is unknowable, so the marker may well live somewhere
+		// this path never looks. Naming the path is what keeps the
+		// "cleared" that follows from claiming more than it can support.
+		fmt.Fprintf(errOut, "markgate: %s could not be read (%v); looked only at %s\n",
+			config.Filename, parseErr, markerPath)
+		if _, statErr := os.Stat(markerPath); errors.Is(statErr, os.ErrNotExist) {
+			fmt.Fprintf(errOut, "markgate: no marker was there; if the gate set state_dir, its marker still exists\n")
+		}
+	}
+
+	return &clearTarget{key: k, markerPath: markerPath}, nil
+}
+
 // newGateCtxWithConfig builds a gateCtx from already-resolved
 // components, skipping the config / git / hasher I/O newGateCtx does.
 // Used by callers that walk multiple keys (bare `status`) to avoid

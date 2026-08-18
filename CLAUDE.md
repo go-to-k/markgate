@@ -47,6 +47,17 @@ it is the spec — see "README as a spec" below.
 - **No implicit nesting of `markgate/`** when the user gives an
   explicit path (`--state-dir` / `state_dir:`). The user owns the
   layout they asked for.
+- **A command's preconditions are the ones it actually has.** Config
+  validation lives in `config.Load`, and every command that resolves
+  a hasher goes through it. `clear` does not — it deletes a file, and
+  its only config dependency is `state_dir` — so it uses
+  `config.Parse` instead. Requiring a valid document there put the
+  recovery path inside the trap it recovers from: one bad gate made
+  *every* marker unremovable, including markers for valid gates, with
+  hand-editing YAML as the only way out. Skipping validation for one
+  command is not the same as weakening it; if you add a command that
+  genuinely needs less than `newGateCtx` provides, give it a narrower
+  resolver rather than loosening the shared one.
 - **A digest that cannot change must never read as fresh.** An empty
   scope hashes to the SHA-256 of nothing — the same constant for
   every such gate — so the marker matches forever and the gate can

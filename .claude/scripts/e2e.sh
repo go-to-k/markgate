@@ -8,7 +8,9 @@
 # bare status, and gate dependencies (composes / requires) — and
 # (c) the hash: diff strategy (#68): base-branch churn staying fresh,
 # same-file churn going stale, the empty-delta and unresolvable-base
-# refusals, flag and config validation.
+# refusals, flag and config validation -- (d) the dead-include refusal
+# shared by both scoped modes (#70) -- and (e) clear surviving an
+# invalid config (#77).
 #
 # The assertion COUNT is printed by the summary and deliberately not
 # repeated in prose anywhere: it drifted by 14 the last time it was.
@@ -865,6 +867,95 @@ assert_eq "dead glob: the healthy gate is unaffected exit=0" "0" "$?"
 out=$($MG status scan 2>&1)
 assert_eq "dead glob: single-key status is a mismatch exit=1" "1" "$?"
 assert_contains "dead glob: single-key status explains why" "dead scope" "$out"
+
+cyan "=== #77 clear survives an invalid config ==="
+new_repo
+
+cat > .markgate.yml <<'EOF'
+gates:
+  good:
+    hash: files
+    include:
+      - "src/**"
+    state_dir: .mg-store
+EOF
+$MG set good >/dev/null 2>&1
+assert_file "clear: seed marker written to state_dir" ".mg-store/good.json"
+
+# A different gate goes invalid. Removal must not become impossible.
+cat > .markgate.yml <<'EOF'
+gates:
+  good:
+    hash: files
+    include:
+      - "src/**"
+    state_dir: .mg-store
+  broken:
+    hash: bogus
+EOF
+out=$($MG clear good 2>&1)
+assert_eq "clear: invalid config still clears exit=0" "0" "$?"
+assert_absent "clear: the marker really went" ".mg-store/good.json"
+assert_absent "clear: state_dir honored, no default dir made" ".git/markgate"
+assert_contains "clear: the config error is still reported" "bogus" "$out"
+
+# Skipped for clear, not weakened.
+$MG set good >/dev/null 2>&1
+assert_eq "clear: set still refuses an invalid config exit=2" "2" "$?"
+$MG verify good >/dev/null 2>&1
+assert_eq "clear: verify still refuses an invalid config exit=2" "2" "$?"
+$MG status >/dev/null 2>&1
+assert_eq "clear: status still refuses an invalid config exit=2" "2" "$?"
+
+# Unparseable: state_dir is unknowable, so say which path was used.
+# Seeded while the config is still valid -- seeding afterwards would make
+# `set` fail, leaving nothing to clear and an assertion that passes no
+# matter what clear does.
+cat > .markgate.yml <<'CFGEOF'
+gates:
+  good:
+    hash: files
+    include:
+      - "src/**"
+CFGEOF
+$MG set k --hash files --include "src/**" --state-dir .mg2 >/dev/null 2>&1
+assert_file "clear: override marker seeded before the config breaks" ".mg2/k.json"
+printf 'gates:\n  good: {hash: files\n' > .markgate.yml
+out=$($MG clear k --state-dir .mg2 2>&1)
+assert_eq "clear: unparseable config still clears exit=0" "0" "$?"
+assert_contains "clear: says the config could not be read" "could not be read" "$out"
+assert_contains "clear: names the path it looked at" ".mg2/k.json" "$out"
+assert_absent "clear: --state-dir still resolves exactly" ".mg2/k.json"
+
+# With no override the fallback may look somewhere the marker is not, so
+# it must say so rather than let "cleared" imply the marker is gone.
+out=$($MG clear neverset 2>&1)
+assert_eq "clear: fallback with nothing there exit=0" "0" "$?"
+assert_contains "clear: warns the marker may survive elsewhere" "still exists" "$out"
+
+# Leniency is about the config, not the command line.
+cat > .markgate.yml <<'CFGEOF'
+gates:
+  good:
+    hash: files
+    include:
+      - "src/**"
+CFGEOF
+$MG clear good --hash bogus >/dev/null 2>&1
+assert_eq "clear: flag typo still refused on a valid config exit=2" "2" "$?"
+
+# A clean config must stay silent, or the warnings above mean nothing.
+cat > .markgate.yml <<'EOF'
+gates:
+  good:
+    hash: files
+    include:
+      - "src/**"
+EOF
+$MG set good >/dev/null 2>&1
+out=$($MG clear good 2>&1)
+assert_eq "clear: valid config clears exit=0" "0" "$?"
+assert_eq "clear: valid config warns about nothing" "cleared: good" "$out"
 
 # ─────────────────────────────────────────────────────────────────
 echo

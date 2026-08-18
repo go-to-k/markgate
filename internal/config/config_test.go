@@ -146,6 +146,51 @@ func TestLoad_ExplicitGitTreeOnDepsOnlyGateOK(t *testing.T) {
 	}
 }
 
+// Parse is the half of Load that clear relies on: a document that fails
+// validation still yields accurate storage locations, so removal does
+// not have to wait on the rest of the file being correct.
+func TestParse_DoesNotValidate(t *testing.T) {
+	dir := t.TempDir()
+	body := "gates:\n  good:\n    hash: files\n    include:\n      - \"src/**\"\n    state_dir: .mg\n" +
+		"  broken:\n    hash: bogus\n"
+	writeConfig(t, dir, body)
+
+	if _, err := Load(dir); err == nil {
+		t.Fatal("Load should still reject this document")
+	}
+	c, err := Parse(dir)
+	if err != nil {
+		t.Fatalf("Parse should accept a document that only fails validation: %v", err)
+	}
+	if got := c.Gate("good").StateDir; got != ".mg" {
+		t.Errorf("Gate(\"good\").StateDir = %q, want .mg", got)
+	}
+	if len(c.Validate()) == 0 {
+		t.Error("Parse must not validate, but Validate found nothing to report")
+	}
+}
+
+// Malformed YAML is the one thing Parse still refuses: there is nothing
+// to read a state_dir out of.
+func TestParse_RejectsMalformedYAML(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "gates:\n  good: {hash: files\n")
+	if _, err := Parse(dir); err == nil {
+		t.Error("Parse should reject malformed YAML")
+	}
+}
+
+// A missing file is not an error for either, same as before.
+func TestParse_MissingFileIsEmpty(t *testing.T) {
+	c, err := Parse(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Gates) != 0 {
+		t.Errorf("Gates = %v, want empty", c.Gates)
+	}
+}
+
 func TestLoad_UnknownHash(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, "gates:\n  x:\n    hash: bogus\n")

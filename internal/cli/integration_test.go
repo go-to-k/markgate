@@ -2758,3 +2758,188 @@ func TestDeadIncludeDegradesBareStatus(t *testing.T) {
 		t.Errorf("status scan: code = %d, out = %q; want 1 naming the dead scope", code, out)
 	}
 }
+
+// clear is the recovery path, so requiring a valid config to use it puts
+// the escape hatch inside the trap: a document that stopped validating
+// leaves every marker unremovable, including markers for gates that are
+// perfectly fine.
+func TestClearToleratesAnInvalidConfig(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  good:\n    hash: files\n    include:\n      - \"src/**\"\n    state_dir: .mg-store\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	if code, _ := runCmd(t, "set", "good"); code != 0 {
+		t.Fatal("seed set failed")
+	}
+	marker := filepath.Join(dir, ".mg-store", "good.json")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("fixture broken: %v", err)
+	}
+
+	// A different gate goes invalid.
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  good:\n    hash: files\n    include:\n      - \"src/**\"\n    state_dir: .mg-store\n"+
+			"  broken:\n    hash: bogus\n")
+
+	code, _, stderr := runCmdStderr(t, "clear", "good")
+	if code != 0 {
+		t.Errorf("clear with an invalid config: code = %d, want 0", code)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("clear did not remove %s (err = %v)", marker, err)
+	}
+	// The state_dir of a gate that fails validation is still accurate, so
+	// the default location must not have been used instead.
+	if _, err := os.Stat(filepath.Join(dir, ".git", "markgate")); err == nil {
+		t.Error("clear fell back to the default location despite a readable state_dir")
+	}
+	// Clearing must not double as a way to stop noticing the errors.
+	if !strings.Contains(stderr, "bogus") {
+		t.Errorf("clear did not report the config error: %q", stderr)
+	}
+
+	// Skipped for clear, not weakened: everything that resolves a hasher
+	// still refuses.
+	for _, args := range [][]string{
+		{"set", "good"}, {"verify", "good"}, {"status", "good"}, {"status"},
+	} {
+		if code, _ := runCmd(t, args...); code != 2 {
+			t.Errorf("%v with an invalid config: code = %d, want 2", args, code)
+		}
+	}
+}
+
+// An unparseable document is the one case where state_dir cannot be
+// recovered. Refusing there would close the escape hatch exactly when
+// the config is most broken, so clear proceeds — but says which location
+// it used, since otherwise "cleared" would be a claim it cannot support.
+func TestClearReportsTheLocationWhenTheConfigCannotBeParsed(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	if code, _ := runCmd(t, "set", "k", "--hash", "files", "--include", "src/**"); code != 0 {
+		t.Fatal("seed set failed")
+	}
+	writeRepoFile(t, dir, ".markgate.yml", "gates:\n  good: {hash: files\n")
+
+	code, _, stderr := runCmdStderr(t, "clear", "k")
+	if code != 0 {
+		t.Errorf("clear with an unparseable config: code = %d, want 0", code)
+	}
+	if !strings.Contains(stderr, "could not be read") {
+		t.Errorf("clear did not say the config was unreadable: %q", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git", "markgate", "k.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("clear did not remove the marker (err = %v)", err)
+	}
+	// The path is named, not just described: on this branch the marker
+	// may live somewhere clear never looked, so "cleared" only stays
+	// honest if the user can see where it did look.
+	if !strings.Contains(stderr, filepath.Join(".git", "markgate", "k.json")) {
+		t.Errorf("clear did not name the path it used: %q", stderr)
+	}
+
+	// Nothing at the fallback path is the dangerous shape: "cleared"
+	// would otherwise imply the marker is gone when a gate whose
+	// state_dir could not be read may still have one.
+	_, _, stderr = runCmdStderr(t, "clear", "neverset")
+	if !strings.Contains(stderr, "still exists") {
+		t.Errorf("clear did not warn that a marker may survive elsewhere: %q", stderr)
+	}
+}
+
+// --state-dir and the env var still resolve exactly when the config is
+// unreadable — only the layer the file would have supplied falls back.
+// Seeded BEFORE the config breaks, or the marker never exists and the
+// assertion passes no matter what clear does.
+func TestClearHonorsOverridesWhenTheConfigCannotBeParsed(t *testing.T) {
+	for _, tc := range []struct{ name, dirName string }{
+		{"flag", "flagdir"},
+		{"env", "envdir"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			writeRepoFile(t, dir, "src/a.go", "a")
+			gitIn(t, dir, "add", ".")
+			gitIn(t, dir, "commit", "-qm", "seed")
+			writeRepoFile(t, dir, ".markgate.yml",
+				"gates:\n  k:\n    hash: files\n    include:\n      - \"src/**\"\n")
+
+			var args []string
+			if tc.name == "flag" {
+				args = []string{"--state-dir", tc.dirName}
+			} else {
+				t.Setenv(EnvStateDir, tc.dirName)
+			}
+
+			if code, _ := runCmd(t, append([]string{"set", "k"}, args...)...); code != 0 {
+				t.Fatal("seed set failed")
+			}
+			marker := filepath.Join(dir, tc.dirName, "k.json")
+			if _, err := os.Stat(marker); err != nil {
+				t.Fatalf("fixture broken, nothing to clear: %v", err)
+			}
+
+			writeRepoFile(t, dir, ".markgate.yml", "gates:\n  k: {hash: files\n")
+			if code, _ := runCmd(t, append([]string{"clear", "k"}, args...)...); code != 0 {
+				t.Fatalf("clear: code = %d, want 0", code)
+			}
+			if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the override did not resolve exactly: %s survived (err = %v)", marker, err)
+			}
+		})
+	}
+}
+
+// Leniency is about the config, not the command line. A flag that
+// cannot mean anything is still a typo worth reporting, so `clear`
+// stays as strict as every other command whenever the document itself
+// is fine — and stops checking only once the document is not.
+func TestClearStillRejectsFlagTyposOnAValidConfig(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  g:\n    hash: files\n    include:\n      - \"src/**\"\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+
+	for _, args := range [][]string{
+		{"clear", "g", "--hash", "bogus"},
+		{"clear", "g", "--hash", "diff"},
+		{"clear", "g", "--base", "origin/main"},
+	} {
+		if code, _ := runCmd(t, args...); code != 2 {
+			t.Errorf("%v on a valid config: code = %d, want 2", args, code)
+		}
+	}
+
+	// Once the document is invalid, the same flags stop being checked —
+	// otherwise the recovery path would be blocked by the very thing it
+	// is there to recover from.
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  g:\n    hash: files\n    include:\n      - \"src/**\"\n  broken:\n    hash: bogus\n")
+	if code, _ := runCmd(t, "clear", "g", "--hash", "bogus"); code != 0 {
+		t.Errorf("clear on an invalid config: code = %d, want 0", code)
+	}
+}
+
+// A clean config must stay silent: the warnings above are the signal
+// that something is wrong, so they must not fire on the happy path.
+func TestClearIsSilentOnAValidConfig(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  good:\n    hash: files\n    include:\n      - \"src/**\"\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	if code, _ := runCmd(t, "set", "good"); code != 0 {
+		t.Fatal("seed set failed")
+	}
+	code, _, stderr := runCmdStderr(t, "clear", "good")
+	if code != 0 || stderr != "" {
+		t.Errorf("clear on a valid config: code = %d, stderr = %q; want 0 and silence", code, stderr)
+	}
+}
