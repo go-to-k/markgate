@@ -593,6 +593,43 @@ Reach for `files` only when you specifically want the "ignore
 commits that don't touch these paths" semantics, and for `diff` only
 when base-branch churn is what keeps re-triggering an expensive gate.
 
+#### A dead `include` is refused, not silently empty
+
+Both scoped strategies digest a *set of paths*. When that set comes
+out empty, the digest is the SHA-256 of nothing — a constant, the
+same value for every such gate — so the marker matches forever and
+the gate can never block. A typo (`scr/**`), a renamed directory, or
+a path that moved lands you there without any other symptom.
+
+markgate distinguishes the two ways a scope can be empty:
+
+| situation | treatment |
+| --- | --- |
+| no `include` pattern matches **any** path in the working tree | **error, exit 2** — the configuration is dead |
+| patterns match, but this branch changed none of them | fine (`diff` warns on `set`, `files` is silent) |
+| `exclude` removed everything `include` matched | fine — that is a deliberate configuration |
+| at least one pattern is live, others are dead | fine at run time; `config lint` warns per pattern |
+
+The error fires wherever the digest is actually computed — `set`,
+`verify`, `run`'s closing `set`, and `markgate status <key>` — and
+names the patterns, because the gate's behavior gives you no other
+way to tell which one is wrong. Bare `markgate status` degrades the
+offending row instead, so one dead gate does not hide the rest, and
+`--explain` still prints the (empty) scope rather than failing: it is
+a diagnostic and never changes what a command does.
+
+This deliberately does **not** fire before a gated command has had a
+chance to create its scope: `verify` with no marker is a plain
+mismatch (exit 1) without hashing, so
+`markgate run dist -- make dist` still works on a clean checkout and
+records the marker once `make dist` has produced the files. If the
+command runs and the scope is *still* empty, the marker is refused.
+
+The trade-off is a scope that is legitimately absent — a sparse
+checkout, an optional subtree — which now exits 2 rather than
+passing. Scope such a gate to a path that is always present, or
+don't gate it.
+
 #### `hash: diff` — ignore changes that arrive from the base branch
 
 `git-tree` and `files` both digest **content**, so neither can tell
@@ -809,7 +846,10 @@ markgate status     [key]              Show marker + match status (bare:
 markgate clear      [key]              Delete the marker (idempotent).
 markgate run        [key] -- <cmd>...  Sugar for verify + <cmd> + set.
 markgate init                          Write a starter .markgate.yml.
-markgate config lint                   Warn on dead include/exclude globs,
+markgate config lint                   Warn per pattern on dead
+                                       include/exclude globs (an include
+                                       list where *every* pattern is dead
+                                       is a run-time error, not a warning),
                                        unknown fields, and every rule that
                                        would make `markgate run` exit 2
                                        (unknown hash, ttl parse, undeclared

@@ -69,6 +69,16 @@ assert_file() {
   fi
 }
 
+assert_absent() {
+  local label="$1" path="$2"
+  if [[ ! -e "$path" ]]; then
+    PASS=$((PASS+1)); green "  PASS  $label  (absent)"
+  else
+    FAIL=$((FAIL+1)); red "  FAIL  $label  unexpectedly present: $path"
+    FAIL_LOG+=("$label: unexpectedly present $path")
+  fi
+}
+
 # Build once, reuse for all assertions.
 cyan "=== build ==="
 cd "$ROOT"
@@ -735,6 +745,81 @@ gates:
 EOF
 $MG config lint >/dev/null 2>&1
 assert_eq "diff: scoped gate with composes lints clean exit=0" "0" "$?"
+cyan "=== #70 dead include glob (both scoped modes) ==="
+new_repo
+
+printf 'a\n' > src/a.go
+git add -A && git commit -qm "dead-glob fixture" >/dev/null
+git checkout -q -b feat
+printf 'mine\n' > src/a.go
+git commit -qam "my work" >/dev/null
+
+# A scope that cannot exist would digest to the constant SHA-256 of the
+# empty set, so the gate would report match forever.
+out=$($MG set typo --hash files --include "scr/**" 2>&1)
+assert_eq "dead glob: files set exit=2" "2" "$?"
+assert_contains "dead glob: error names the pattern" "scr/**" "$out"
+$MG set typo --hash diff --base main --include "scr/**" >/dev/null 2>&1
+assert_eq "dead glob: diff set exit=2" "2" "$?"
+assert_absent "dead glob: no marker recorded" ".git/markgate/typo.json"
+
+# The other empty scope: patterns are live, this branch just changed
+# nothing under them. Refusing here would break the gate on exactly the
+# branches it should trivially pass.
+$MG set quiet --hash diff --base main --include "docs/**" >/dev/null 2>&1
+assert_eq "dead glob: quiet branch with a live include exit=0" "0" "$?"
+$MG set excluded --hash files --include "src/**" --exclude "src/**" >/dev/null 2>&1
+assert_eq "dead glob: exclude emptying the scope exit=0" "0" "$?"
+
+# Must not fire before a gated command can create its scope, or
+# `markgate run build -- make dist` breaks on a clean checkout.
+$MG verify dist --hash files --include "dist/**" >/dev/null 2>&1
+assert_eq "dead glob: verify with no marker is a plain mismatch exit=1" "1" "$?"
+$MG run dist --hash files --include "dist/**" -- sh -c 'mkdir -p dist && echo built > dist/x' >/dev/null 2>&1
+assert_eq "dead glob: run bootstraps a scope its child creates exit=0" "0" "$?"
+$MG verify dist --hash files --include "dist/**" >/dev/null 2>&1
+assert_eq "dead glob: verify after the child built the scope exit=0" "0" "$?"
+
+# The child runs, produces nothing matching, and the marker is refused.
+$MG run never --hash files --include "nope/**" -- touch child-ran.txt >/dev/null 2>&1
+assert_eq "dead glob: run refuses the marker after the child runs exit=2" "2" "$?"
+assert_file "dead glob: the child still ran" "child-ran.txt"
+assert_absent "dead glob: run recorded no marker" ".git/markgate/never.json"
+
+# --explain is a diagnostic: it renders the (empty) scope rather than
+# refusing, so adding the flag never changes what a command does.
+rm -rf dist
+$MG run dist2 --hash files --include "dist/**" --explain -- sh -c 'mkdir -p dist && echo built > dist/x' >/dev/null 2>&1
+assert_eq "dead glob: run --explain still bootstraps exit=0" "0" "$?"
+assert_file "dead glob: --explain did not suppress the child" "dist/x"
+$MG set typo2 --hash files --include "scr/**" --explain >/dev/null 2>&1
+assert_eq "dead glob: set --explain still refuses the digest exit=2" "2" "$?"
+
+# A rename is the realistic way a live scope dies under an existing marker.
+cat > .markgate.yml <<'EOF'
+gates:
+  scan:
+    hash: files
+    include:
+      - "src/**"
+  healthy:
+    hash: files
+    include:
+      - "src/**"
+EOF
+$MG set scan >/dev/null 2>&1
+$MG set healthy >/dev/null 2>&1
+git mv src source >/dev/null 2>&1
+out=$($MG verify scan 2>&1)
+assert_eq "dead glob: verify after a rename exit=2" "2" "$?"
+assert_contains "dead glob: rename error names the pattern" "src/**" "$out"
+
+# Bare status degrades the one bad row and keeps listing the rest.
+out=$($MG status 2>&1)
+assert_contains "dead glob: bare status reports the dead row" "dead scope" "$out"
+assert_contains "dead glob: bare status keeps rendering other gates" "healthy" "$out"
+$MG status scan >/dev/null 2>&1
+assert_eq "dead glob: single-key status errors exit=2" "2" "$?"
 
 # ─────────────────────────────────────────────────────────────────
 echo

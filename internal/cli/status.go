@@ -373,11 +373,12 @@ func buildRow(c *gateCtx, configured bool, clock time.Time) (statusRow, error) {
 	}
 	res, err := c.evaluate()
 	if err != nil {
-		// A diff gate whose base is unusable (unfetched ref, or HEAD
-		// sitting at the merge base) is an error everywhere else, but
-		// the bare listing is the "show me every gate" view: report the
-		// offending row and keep rendering the others.
-		if errors.Is(err, hasher.ErrDiffBase) {
+		// A gate that cannot be evaluated at all — an unusable diff base,
+		// or an include list that matches nothing — is an error
+		// everywhere else, but the bare listing is the "show me every
+		// gate" view: report the offending row and keep rendering the
+		// others.
+		if errors.Is(err, hasher.ErrDiffBase) || errors.Is(err, hasher.ErrDeadScope) {
 			row.state = stateMismatch
 			// Only the "what", not the "how to fix": the remedy clause
 			// after the semicolon would blow the table's width open, and

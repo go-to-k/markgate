@@ -11,6 +11,12 @@
 //     HEAD). Changes arriving from the base branch under files this
 //     branch has not touched leave the digest alone.
 //
+// Both scoped strategies refuse to digest a scope whose include list
+// matches nothing in the working tree (ErrDeadScope): that digest is the
+// constant SHA-256 of the empty set, so the marker would match forever.
+// Only Hash refuses — Scope stays a description, so --explain and the
+// status listing keep working.
+//
 // The digest format (framing, sort order, etc.) is an implementation
 // detail; markers written by one version are not guaranteed to validate
 // against another.

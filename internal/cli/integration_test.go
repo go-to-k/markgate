@@ -2515,3 +2515,179 @@ func TestDiffHash_WithStateDir(t *testing.T) {
 		t.Errorf("verify after committing the marker: code = %d, want 0", code)
 	}
 }
+
+// A dead include glob — a typo, a renamed directory, a path that moved —
+// used to make a scoped gate pass forever: the digest degenerated to the
+// SHA-256 of the empty set, so nothing could ever move it. It affects
+// both scoped hash modes identically.
+func TestDeadIncludeIsRefusedAtSet(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	gitIn(t, dir, "checkout", "-q", "-b", "feat")
+	writeRepoFile(t, dir, "src/a.go", "mine")
+	gitIn(t, dir, "commit", "-qam", "my work")
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"files", []string{"set", "typo", "--hash", "files", "--include", "scr/**"}},
+		{"diff", []string{"set", "typo", "--hash", "diff", "--base", "main", "--include", "scr/**"}},
+	} {
+		code, msg := runCmdMsg(t, tc.args...)
+		if code != 2 {
+			t.Errorf("%s: dead include code = %d, want 2", tc.name, code)
+		}
+		if !strings.Contains(msg, "scr/**") {
+			t.Errorf("%s: error does not name the dead pattern: %q", tc.name, msg)
+		}
+	}
+	markerPath := filepath.Join(dir, ".git", "markgate", "typo.json")
+	if _, err := os.Stat(markerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a dead-scope gate wrote a marker at %s (err = %v)", markerPath, err)
+	}
+}
+
+// The realistic path to a dead glob is a rename after the marker was
+// recorded, which is also the only way to reach a marker whose scope has
+// since died. verify must refuse rather than keep reporting match.
+func TestDeadIncludeIsRefusedAtVerifyAfterARename(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  scan:\n    hash: files\n    include:\n      - \"src/**\"\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+
+	if code, _ := runCmd(t, "set", "scan"); code != 0 {
+		t.Fatal("set with a live include should succeed")
+	}
+	if code, _ := runCmd(t, "verify", "scan"); code != 0 {
+		t.Fatal("verify right after set should match")
+	}
+
+	gitIn(t, dir, "mv", "src", "source")
+	gitIn(t, dir, "commit", "-qm", "rename src -> source")
+
+	if code, msg := runCmdMsg(t, "verify", "scan"); code != 2 || !strings.Contains(msg, "src/**") {
+		t.Errorf("verify after the rename: code = %d, msg = %q; want 2 naming src/**", code, msg)
+	}
+}
+
+// The check must not fire before the gated command has had a chance to
+// produce the files, or `markgate run build -- make dist` stops working
+// on a clean checkout. verify returns "no marker" without hashing, so
+// the child still runs and the marker lands once the files exist.
+func TestDeadIncludeDoesNotBreakBootstrappingViaRun(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+
+	if code, _ := runCmd(t, "verify", "dist", "--hash", "files", "--include", "dist/**"); code != 1 {
+		t.Error("verify with no marker should be a plain mismatch, not an error")
+	}
+	built := filepath.Join(dir, "dist", "x")
+	if code, _ := runCmd(t, "run", "dist", "--hash", "files", "--include", "dist/**",
+		"--", "sh", "-c", "mkdir -p dist && echo built > dist/x"); code != 0 {
+		t.Fatal("run should bootstrap a scope its child creates")
+	}
+	if _, err := os.Stat(built); err != nil {
+		t.Fatalf("child did not run: %v", err)
+	}
+	if code, _ := runCmd(t, "verify", "dist", "--hash", "files", "--include", "dist/**"); code != 0 {
+		t.Error("verify after the child built the scope should match")
+	}
+}
+
+// When the child runs and still produces nothing the include matches,
+// the marker must be refused: recording it is what makes the gate pass
+// forever. The child running is the point — this is the case that
+// distinguishes "not yet built" from "will never match".
+func TestDeadIncludeRefusesTheMarkerAfterTheChildRuns(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+
+	stamp := filepath.Join(dir, "child-ran.txt")
+	code, _ := runCmd(t, "run", "never", "--hash", "files", "--include", "nope/**",
+		"--", "touch", stamp)
+	if code != 2 {
+		t.Errorf("run with a dead include: code = %d, want 2", code)
+	}
+	if _, err := os.Stat(stamp); err != nil {
+		t.Errorf("the child should still have run: %v", err)
+	}
+	markerPath := filepath.Join(dir, ".git", "markgate", "never.json")
+	if _, err := os.Stat(markerPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("run recorded a marker for a dead scope (err = %v)", err)
+	}
+}
+
+// --explain is a diagnostic and must not change what a command does.
+// It renders the scope, which for a dead include is legitimately empty;
+// refusing there would make `markgate run build --explain -- make dist`
+// skip its child on a clean checkout while the same command without the
+// flag bootstraps fine.
+func TestDeadIncludeExplainDoesNotChangeTheOutcome(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+
+	args := []string{"run", "dist", "--hash", "files", "--include", "dist/**", "--explain",
+		"--", "sh", "-c", "mkdir -p dist && echo built > dist/x"}
+	if code, _ := runCmd(t, args...); code != 0 {
+		t.Errorf("run --explain bootstrapping a scope: code = %d, want 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dist", "x")); err != nil {
+		t.Errorf("--explain suppressed the child: %v", err)
+	}
+
+	// The digest is still refused; only the description is tolerant.
+	if code, _ := runCmd(t, "set", "typo", "--hash", "files", "--include", "scr/**",
+		"--explain"); code != 2 {
+		t.Errorf("set --explain on a dead include: code = %d, want 2", code)
+	}
+}
+
+// Bare status is the "show me every gate" view, so one unusable gate
+// must degrade its own row rather than abort the listing.
+func TestDeadIncludeDegradesBareStatus(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  scan:\n    hash: files\n    include:\n      - \"src/**\"\n"+
+			"  healthy:\n    hash: files\n    include:\n      - \"src/**\"\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+	if code, _ := runCmd(t, "set", "scan"); code != 0 {
+		t.Fatal("seed set failed")
+	}
+	if code, _ := runCmd(t, "set", "healthy"); code != 0 {
+		t.Fatal("seed set failed")
+	}
+
+	// Kill only scan's scope, by narrowing the config after the fact.
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  scan:\n    hash: files\n    include:\n      - \"scr/**\"\n"+
+			"  healthy:\n    hash: files\n    include:\n      - \"src/**\"\n")
+
+	code, out := runCmd(t, "status")
+	if code != 1 {
+		t.Errorf("bare status: code = %d, want 1", code)
+	}
+	if !strings.Contains(out, "scan") || !strings.Contains(out, "dead scope") {
+		t.Errorf("bare status did not report the dead row: %q", out)
+	}
+	if !strings.Contains(out, "healthy") {
+		t.Errorf("bare status stopped rendering other gates: %q", out)
+	}
+	// Single-key status is not a listing, so it errors like everything else.
+	if code, _ := runCmd(t, "status", "scan"); code != 2 {
+		t.Errorf("status scan: code = %d, want 2", code)
+	}
+}

@@ -3,10 +3,12 @@ package hasher
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
 
@@ -33,6 +35,9 @@ func (f Files) Hash(repo *gitutil.Repo) (string, error) {
 	}
 	matches, err := f.resolve(top)
 	if err != nil {
+		return "", err
+	}
+	if err := refuseDeadScope(top, f.Include, len(matches)); err != nil {
 		return "", err
 	}
 
@@ -86,6 +91,60 @@ func (f Files) resolve(topLevel string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// ErrDeadScope marks an include list where no pattern matches any path
+// in the working tree — a typo, a renamed directory, a path that moved.
+// The scope is then empty for a reason that has nothing to do with the
+// repository's state, so the digest is the constant SHA-256 of the empty
+// set and the gate reports "match" forever. Callers that render many
+// gates at once (bare `status`) match on it to degrade one row instead
+// of aborting the listing; every other command surfaces it as an error.
+var ErrDeadScope = errors.New("dead scope")
+
+// deadScopeErr builds the ErrDeadScope message. The patterns are named
+// because the whole point is that the user cannot see which one is
+// wrong from the gate's behavior — it simply keeps passing.
+func deadScopeErr(include []string) error {
+	return fmt.Errorf("%w: include matches no file in the working tree (%s); the digest would be a constant that never goes stale, so fix the pattern or drop the gate",
+		ErrDeadScope, strings.Join(include, ", "))
+}
+
+// refuseDeadScope reports ErrDeadScope when an include list produced an
+// empty scope and no pattern matches anything in the working tree.
+//
+// Called from Hash and never from Scope: an empty scope is a truthful
+// description of the gate, and Scope backs the diagnostic paths
+// (--explain, the empty-delta warning), which must not change what a
+// command does. Digesting that scope is the part that cannot be allowed
+// — it yields a constant no change can ever move.
+//
+// The extra glob is only paid when the scope came out empty, which also
+// keeps "every pattern is dead" (a broken config) distinct from
+// "exclude removed everything" (a deliberate one).
+func refuseDeadScope(topLevel string, include []string, scopeLen int) error {
+	if scopeLen > 0 || len(include) == 0 {
+		return nil
+	}
+	return liveIncludes(topLevel, include)
+}
+
+// liveIncludes reports ErrDeadScope when include is non-empty and no
+// pattern matches any path in the working tree. Diff needs this as a
+// separate pass because its scope comes from the branch delta rather
+// than from globbing the tree; Files gets the same answer for free
+// inside resolve.
+func liveIncludes(topLevel string, include []string) error {
+	for _, pat := range include {
+		matches, err := MatchGlob(topLevel, pat)
+		if err != nil {
+			return fmt.Errorf("include glob %q: %w", pat, err)
+		}
+		if len(matches) > 0 {
+			return nil
+		}
+	}
+	return deadScopeErr(include)
 }
 
 // MatchGlob expands pat against topLevel as a doublestar glob and returns

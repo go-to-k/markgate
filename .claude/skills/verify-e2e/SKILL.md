@@ -1,6 +1,6 @@
 ---
 name: verify-e2e
-description: Run the markgate end-to-end CLI verification script (`.claude/scripts/e2e.sh`). It exercises the full CLI surface — original primitives (set / verify / clear / run / init / version, default key, --hash files + --include, --state-dir, env-var, precedence) plus every feature added in the 2026-05-09 batch (completion, config lint, TTL, --explain, bare status, composes / requires) and the hash: diff strategy. Wraps the script in `markgate run` so unchanged repos skip the run. Use whenever you want to confirm "all features still work" before declaring done, opening a PR, or merging — or when your changes touch the CLI surface and you want a quick smoke before pushing.
+description: Run the markgate end-to-end CLI verification script (`.claude/scripts/e2e.sh`). It exercises the full CLI surface — original primitives (set / verify / clear / run / init / version, default key, --hash files + --include, --state-dir, env-var, precedence) plus every feature added in the 2026-05-09 batch (completion, config lint, TTL, --explain, bare status, composes / requires) the hash: diff strategy, and the dead-include-glob refusal shared by both scoped modes. Wraps the script in `markgate run` so unchanged repos skip the run. Use whenever you want to confirm "all features still work" before declaring done, opening a PR, or merging — or when your changes touch the CLI surface and you want a quick smoke before pushing.
 ---
 
 # verify-e2e
@@ -77,6 +77,24 @@ Three layers of assertions (the script prints the count on every run; it is deli
   `--base` without `hash=diff` both exit=2
 - config without `base` rejected; `base` on a `files` gate lints
   dirty with an explanatory message
+- deps-only gate (composes/requires, no include) rejects `hash: diff`
+  exit=2; adding `include` makes the same gate lint clean
+
+**Dead `include` globs (both scoped modes)**
+
+- an include list matching nothing -> `set` exit=2 naming the
+  pattern, on `files` and `diff` alike, and no marker is written
+- the other empty scopes stay usable: a quiet branch with a live
+  include, and `exclude` emptying what `include` matched
+- bootstrapping is preserved: `verify` with no marker is exit=1
+  without hashing, so `run` still executes its child and records the
+  marker once the child creates the scope
+- when the child runs and the scope is still empty, the marker is
+  refused (child ran, no marker written)
+- `--explain` stays diagnostic: it renders the empty scope, so adding
+  the flag neither suppresses `run`'s child nor rescues `set`
+- a rename that kills a live scope -> `verify` exit=2; bare `status`
+  degrades that row and keeps rendering the others
 
 ## How it caches
 

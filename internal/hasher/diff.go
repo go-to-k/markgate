@@ -53,6 +53,16 @@ func (d Diff) Hash(repo *gitutil.Repo) (string, error) {
 		return "", err
 	}
 
+	// An empty scope has two very different causes and only one is a bug:
+	// this branch changed nothing the gate covers (legitimate, and the
+	// case this hash type exists for), or the include list matches
+	// nothing anywhere (a dead config that would digest to a constant).
+	// Globbing the tree tells them apart, and only on the empty path —
+	// the delta itself is never globbed.
+	if err := refuseDeadScope(top, d.Include, len(entries)); err != nil {
+		return "", err
+	}
+
 	h := sha256.New()
 	for _, e := range entries {
 		// The base-side blob is framed in so that resolving a merge by

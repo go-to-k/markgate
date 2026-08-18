@@ -29,6 +29,11 @@ gates:
     #   - "vendor/**"
     #   - "node_modules/**"
     #
+    # An include list where no pattern matches any file in the working
+    # tree is a run-time error, not an empty scope: the digest would be
+    # a constant and the gate could never block. "markgate config lint"
+    # warns per pattern, so run it after renaming a directory.
+    #
     # state_dir controls where the marker file is written. Prefer
     # relative paths (resolved against the repo top-level) so every
     # machine agrees on the location. Two patterns:

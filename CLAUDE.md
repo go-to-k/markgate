@@ -47,6 +47,17 @@ it is the spec — see "README as a spec" below.
 - **No implicit nesting of `markgate/`** when the user gives an
   explicit path (`--state-dir` / `state_dir:`). The user owns the
   layout they asked for.
+- **A digest that cannot change is an error, not a value.** An empty
+  scope hashes to the SHA-256 of nothing — the same constant for
+  every such gate — so the marker matches forever and the gate can
+  never block. Refuse it wherever it is reachable by
+  misconfiguration: a dead `include` list (`hasher.ErrDeadScope`), an
+  empty `hash: diff` delta (`hasher.ErrDiffBase`). Refuse it only
+  where the *configuration* is at fault, though — a live scope that
+  this branch happens not to have touched is legitimate and must
+  stay usable, or the gate breaks on the branches it should trivially
+  pass. Both sentinels are matched by bare `status` so one bad gate
+  degrades its own row instead of aborting the listing.
 
 ## Testing
 
@@ -176,7 +187,8 @@ message to a temp file first sidesteps all shell escaping.
   `--hash files`, `--state-dir`, env-var, precedence) and every
   feature added in the 2026-05-09 batch (completion, config lint,
   TTL, `--explain`, bare status, composes / requires) plus
-  `hash: diff` (#68). The script's summary prints the assertion count;
+  `hash: diff` (#68) and the dead-include refusal shared by both
+  scoped hash modes (#70). The script's summary prints the assertion count;
   exit code = number of failures. Do not restate the count here — it
   has no way to stay in sync and has already drifted once.
 
