@@ -70,6 +70,9 @@ func runE(cmd *cobra.Command, args []string, overrides *gateFlagValues, explain 
 	if res.matched {
 		return nil
 	}
+	if res.deadScope != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "markgate: %s\n", res.deadScope)
+	}
 
 	code, execErr := execChild(cmdArgs)
 	if execErr != nil {

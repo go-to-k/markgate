@@ -593,6 +593,55 @@ Reach for `files` only when you specifically want the "ignore
 commits that don't touch these paths" semantics, and for `diff` only
 when base-branch churn is what keeps re-triggering an expensive gate.
 
+#### A dead `include` is refused, not silently empty
+
+Both scoped strategies digest a *set of paths*. When that set comes
+out empty, the digest is the SHA-256 of nothing — a constant, the
+same value for every such gate — so the marker matches forever and
+the gate can never block. A typo (`scr/**`), a renamed directory, or
+a path that moved lands you there without any other symptom.
+
+markgate distinguishes the two ways a scope can be empty:
+
+| situation | treatment |
+| --- | --- |
+| no `include` pattern can match anything the gate can see | **`set` errors (exit 2); `verify` is a mismatch (exit 1)** |
+| patterns match, but this branch changed none of them | fine (`diff` warns on `set`, `files` is silent) |
+| `exclude` removed everything `include` matched | fine — that is a deliberate configuration |
+| at least one pattern is live, others are dead | fine at run time; `config lint` warns per pattern |
+
+**Why `verify` is a mismatch and not an error.** The bug is that a
+dead scope *passes*; exit 1 fixes that, and it means "re-run the
+check", which is what both cases need. A gate on build output is
+legitimately empty between `make clean` and the next build, so
+erroring on the read path would stop `markgate run dist -- make dist`
+from executing the very command that refills the scope — leaving the
+gate recoverable only via `markgate clear`. `set` is where the
+constant would actually be recorded, and by then the gated command
+has had its chance, so a still-empty scope there is the
+configuration's fault and is refused. A typo therefore re-runs its
+command and then fails loudly at `set`, and no marker is ever
+written.
+
+**"Anything the gate can see" differs per strategy.** `files` hashes
+whatever is on disk, so an include matching only gitignored paths is
+a real scope. `diff` digests a git delta, which can never contain an
+ignored path or anything under `.git/`, so the same include there is
+permanently empty and is refused. Getting this backwards would be a
+false all-clear rather than a false alarm.
+
+The message names the patterns, because the gate's behavior gives
+you no other way to tell which one is wrong. Bare `markgate status`
+shows the offending row as a mismatch and keeps listing the rest,
+and `--explain` still prints the (empty) scope rather than failing:
+it is a diagnostic and never changes what a command does.
+
+The trade-off is a scope that is legitimately absent for good and
+not merely between builds — a sparse checkout, an optional subtree.
+Its gate now reports mismatch forever and refuses to record, instead
+of passing. Scope such a gate to a path that is always present, or
+don't gate it.
+
 #### `hash: diff` — ignore changes that arrive from the base branch
 
 `git-tree` and `files` both digest **content**, so neither can tell
@@ -809,7 +858,11 @@ markgate status     [key]              Show marker + match status (bare:
 markgate clear      [key]              Delete the marker (idempotent).
 markgate run        [key] -- <cmd>...  Sugar for verify + <cmd> + set.
 markgate init                          Write a starter .markgate.yml.
-markgate config lint                   Warn on dead include/exclude globs,
+markgate config lint                   Warn per pattern on dead
+                                       include/exclude globs (an include
+                                       list where *every* pattern is dead
+                                       is warned about here and also
+                                       refused by `set`),
                                        unknown fields, and every rule that
                                        would make `markgate run` exit 2
                                        (unknown hash, ttl parse, undeclared

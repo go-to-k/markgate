@@ -11,6 +11,15 @@
 //     HEAD). Changes arriving from the base branch under files this
 //     branch has not touched leave the digest alone.
 //
+// Both scoped strategies refuse to digest a scope whose include list
+// matches nothing they can see (ErrDeadScope): that digest is the
+// constant SHA-256 of the empty set, so the marker would match forever.
+// "What they can see" is per strategy — Files asks the working tree,
+// which it really does hash whatever git thinks of it, while Diff asks
+// what git could put in a delta, since an ignored path never can.
+// Only Hash refuses — Scope stays a description, so --explain and the
+// status listing keep working.
+//
 // The digest format (framing, sort order, etc.) is an implementation
 // detail; markers written by one version are not guaranteed to validate
 // against another.

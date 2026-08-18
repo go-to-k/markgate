@@ -53,6 +53,16 @@ func (d Diff) Hash(repo *gitutil.Repo) (string, error) {
 		return "", err
 	}
 
+	// An empty scope has two very different causes and only one is a bug:
+	// this branch changed nothing the gate covers (legitimate, and the
+	// case this hash type exists for), or the include list matches
+	// nothing anywhere (a dead config that would digest to a constant).
+	// Globbing the tree tells them apart, and only on the empty path —
+	// the delta itself is never globbed.
+	if err := refuseDeadScope(d.candidates(repo), d.Include, len(entries)); err != nil {
+		return "", err
+	}
+
 	h := sha256.New()
 	for _, e := range entries {
 		// The base-side blob is framed in so that resolving a merge by
@@ -105,6 +115,16 @@ func (d Diff) MergeBase(repo *gitutil.Repo) (string, error) {
 func (d Diff) Preflight(repo *gitutil.Repo) error {
 	_, err := d.entries(repo)
 	return err
+}
+
+// candidates lists every path that could ever appear in this gate's
+// delta: what git tracks, plus what is untracked and not ignored.
+// Deliberately not the working tree — an ignored path or anything under
+// .git/ can never enter a diff, so globbing the disk would call such an
+// include "live" while its scope stays permanently empty, which is the
+// exact fail-open this check exists to close.
+func (d Diff) candidates(repo *gitutil.Repo) func() ([]string, error) {
+	return func() ([]string, error) { return repo.CandidateNames() }
 }
 
 // entries returns the sorted, include/exclude-filtered delta. Patterns

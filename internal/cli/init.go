@@ -48,6 +48,14 @@ gates:
     #
     # See README "Sharing markers" for the full picture.
 
+  # On a SCOPED gate (hash: files or hash: diff), an include list where
+  # no pattern can match anything the gate sees is refused by set and
+  # reported as a mismatch by verify: its digest would be a constant and
+  # the gate could never block. "markgate config lint" warns per pattern,
+  # so run it after renaming a directory. This does not apply to the
+  # default hash: git-tree, whose digest folds in HEAD and so keeps
+  # invalidating even when its own include matches nothing.
+
   # Example: narrow-scope gate for PR-time docs checks.
   # pre-pr:
   #   hash: files

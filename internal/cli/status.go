@@ -173,12 +173,21 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 			unconfigured: false,
 		}
 		switch {
+		case res.deadScope != nil:
+			row.state = stateMismatch
+			row.note = noteWhat(res.deadScope)
 		case res.hashTypeChanged, res.ownDigestDiff:
 			row.state = stateMismatch
 			row.note = noteDigestDiff
-		case !res.matched:
+		case res.ttl.expired:
+			row.state = stateMismatch
+			row.note = fmt.Sprintf("expired %s ago", formatAge(res.ttl.age-res.ttl.ttl))
+		case res.childKey != "":
 			row.state = stateMismatch
 			row.note = "child " + res.childKey + " is stale"
+		case !res.matched:
+			row.state = stateMismatch
+			row.note = res.reason
 		default:
 			row.state = stateMatch
 		}
@@ -227,6 +236,9 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 	case res.ownDigestDiff:
 		fmt.Fprintln(out, "state:      mismatch (digest differs)")
 		return &ExitError{Code: 1}
+	case res.deadScope != nil:
+		fmt.Fprintf(out, "state:      mismatch (%s)\n", res.deadScope)
+		return &ExitError{Code: 1}
 	case res.ttl.expired:
 		fmt.Fprintf(out, "state:      mismatch (expired by ttl: %s, marker is %s old)\n", c.gate.TTL, formatAge(res.ttl.age))
 		return &ExitError{Code: 1}
@@ -240,6 +252,13 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 		fmt.Fprintln(out, "state:      match")
 		return nil
 	}
+}
+
+// noteWhat trims an error down to the clause before the first
+// semicolon: the table column has no room for the remedy, and
+// `markgate status <key>` prints the whole message anyway.
+func noteWhat(err error) string {
+	return strings.SplitN(err.Error(), ";", 2)[0]
 }
 
 func statusListAll(out io.Writer, overrides *gateFlagValues, asJSON bool) error {
@@ -373,16 +392,17 @@ func buildRow(c *gateCtx, configured bool, clock time.Time) (statusRow, error) {
 	}
 	res, err := c.evaluate()
 	if err != nil {
-		// A diff gate whose base is unusable (unfetched ref, or HEAD
-		// sitting at the merge base) is an error everywhere else, but
-		// the bare listing is the "show me every gate" view: report the
-		// offending row and keep rendering the others.
+		// A diff gate whose base is unusable is an error everywhere
+		// else, but the bare listing is the "show me every gate" view:
+		// report the offending row and keep rendering the others. A dead
+		// scope needs no branch here — evaluate returns it as a plain
+		// mismatch.
 		if errors.Is(err, hasher.ErrDiffBase) {
 			row.state = stateMismatch
 			// Only the "what", not the "how to fix": the remedy clause
 			// after the semicolon would blow the table's width open, and
 			// `markgate status <key>` prints the whole message anyway.
-			row.note = strings.SplitN(err.Error(), ";", 2)[0]
+			row.note = noteWhat(err)
 			return row, nil
 		}
 		return row, err
@@ -399,6 +419,9 @@ func buildRow(c *gateCtx, configured bool, clock time.Time) (statusRow, error) {
 	}
 	row.marker = res.marker
 	switch {
+	case res.deadScope != nil:
+		row.state = stateMismatch
+		row.note = noteWhat(res.deadScope)
 	case res.hashTypeChanged, res.ownDigestDiff:
 		row.state = stateMismatch
 		row.note = noteDigestDiff

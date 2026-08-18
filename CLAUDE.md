@@ -47,6 +47,27 @@ it is the spec — see "README as a spec" below.
 - **No implicit nesting of `markgate/`** when the user gives an
   explicit path (`--state-dir` / `state_dir:`). The user owns the
   layout they asked for.
+- **A digest that cannot change must never read as fresh.** An empty
+  scope hashes to the SHA-256 of nothing — the same constant for
+  every such gate — so the marker matches forever and the gate can
+  never block. Two sentinels mark it: a dead `include` list
+  (`hasher.ErrDeadScope`) and an empty `hash: diff` delta
+  (`hasher.ErrDiffBase`).
+  **Refuse at `set`, not on the read path.** `set` is where the
+  constant would be recorded, and by then any gated command has had
+  its chance to fill the scope. `verify` must stop *passing*, which
+  exit 1 already achieves; escalating it to exit 2 stops `markgate
+  run` from executing the command that would refill the scope, and a
+  gate on build output between `make clean` and the next build is
+  then recoverable only via `clear`. That regression shipped once —
+  the test covered bootstrapping with no marker and missed the second
+  build cycle.
+  **Refuse only where the configuration is at fault.** A live scope
+  this branch happens not to have touched is legitimate and must stay
+  usable. What counts as "live" is per strategy: `files` hashes what
+  is on disk, `diff` draws from a git delta that can never contain an
+  ignored path, so using the working tree as the universe for `diff`
+  is a false all-clear, not a false alarm.
 
 ## Testing
 
@@ -176,7 +197,8 @@ message to a temp file first sidesteps all shell escaping.
   `--hash files`, `--state-dir`, env-var, precedence) and every
   feature added in the 2026-05-09 batch (completion, config lint,
   TTL, `--explain`, bare status, composes / requires) plus
-  `hash: diff` (#68). The script's summary prints the assertion count;
+  `hash: diff` (#68) and the dead-include refusal shared by both
+  scoped hash modes (#70). The script's summary prints the assertion count;
   exit code = number of failures. Do not restate the count here — it
   has no way to stay in sync and has already drifted once.
 

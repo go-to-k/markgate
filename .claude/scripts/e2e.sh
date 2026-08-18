@@ -69,6 +69,16 @@ assert_file() {
   fi
 }
 
+assert_absent() {
+  local label="$1" path="$2"
+  if [[ ! -e "$path" ]]; then
+    PASS=$((PASS+1)); green "  PASS  $label  (absent)"
+  else
+    FAIL=$((FAIL+1)); red "  FAIL  $label  unexpectedly present: $path"
+    FAIL_LOG+=("$label: unexpectedly present $path")
+  fi
+}
+
 # Build once, reuse for all assertions.
 cyan "=== build ==="
 cd "$ROOT"
@@ -735,6 +745,126 @@ gates:
 EOF
 $MG config lint >/dev/null 2>&1
 assert_eq "diff: scoped gate with composes lints clean exit=0" "0" "$?"
+cyan "=== #70 dead include glob (both scoped modes) ==="
+new_repo
+
+printf 'a\n' > src/a.go
+git add -A && git commit -qm "dead-glob fixture" >/dev/null
+git checkout -q -b feat
+printf 'mine\n' > src/a.go
+git commit -qam "my work" >/dev/null
+
+# A scope that cannot exist would digest to the constant SHA-256 of the
+# empty set, so the gate would report match forever.
+out=$($MG set typo --hash files --include "scr/**" 2>&1)
+assert_eq "dead glob: files set exit=2" "2" "$?"
+assert_contains "dead glob: error names the pattern" "scr/**" "$out"
+$MG set typo --hash diff --base main --include "scr/**" >/dev/null 2>&1
+assert_eq "dead glob: diff set exit=2" "2" "$?"
+assert_absent "dead glob: no marker recorded" ".git/markgate/typo.json"
+
+# The other empty scope: patterns are live, this branch just changed
+# nothing under them. Refusing here would break the gate on exactly the
+# branches it should trivially pass.
+$MG set quiet --hash diff --base main --include "docs/**" >/dev/null 2>&1
+assert_eq "dead glob: quiet branch with a live include exit=0" "0" "$?"
+$MG set excluded --hash files --include "src/**" --exclude "src/**" >/dev/null 2>&1
+assert_eq "dead glob: exclude emptying the scope exit=0" "0" "$?"
+
+# Must not fire before a gated command can create its scope, or
+# `markgate run build -- make dist` breaks on a clean checkout.
+$MG verify dist --hash files --include "dist/**" >/dev/null 2>&1
+assert_eq "dead glob: verify with no marker is a plain mismatch exit=1" "1" "$?"
+$MG run dist --hash files --include "dist/**" -- sh -c 'mkdir -p dist && echo built > dist/x' >/dev/null 2>&1
+assert_eq "dead glob: run bootstraps a scope its child creates exit=0" "0" "$?"
+$MG verify dist --hash files --include "dist/**" >/dev/null 2>&1
+assert_eq "dead glob: verify after the child built the scope exit=0" "0" "$?"
+
+# The child runs, produces nothing matching, and the marker is refused.
+$MG run never --hash files --include "nope/**" -- touch child-ran.txt >/dev/null 2>&1
+assert_eq "dead glob: run refuses the marker after the child runs exit=2" "2" "$?"
+assert_file "dead glob: the child still ran" "child-ran.txt"
+assert_absent "dead glob: run recorded no marker" ".git/markgate/never.json"
+
+# --explain is a diagnostic: it renders the (empty) scope rather than
+# refusing, so adding the flag never changes what a command does.
+rm -rf dist
+$MG run dist2 --hash files --include "dist/**" --explain -- sh -c 'mkdir -p dist && echo built > dist/x' >/dev/null 2>&1
+assert_eq "dead glob: run --explain still bootstraps exit=0" "0" "$?"
+assert_file "dead glob: --explain did not suppress the child" "dist/x"
+# The harder case: a glob that cannot be resolved at all. Without a
+# marker nothing else touches it, so --explain is the only caller.
+$MG verify badglob --hash files --include "a[b" >/dev/null 2>&1
+plain_code=$?
+$MG verify badglob --hash files --include "a[b" --explain >/dev/null 2>&1
+assert_eq "dead glob: --explain does not change verify on a bad glob" "$plain_code" "$?"
+$MG run badglob --hash files --include "a[b" --explain -- touch explain-ran.txt >/dev/null 2>&1
+assert_file "dead glob: --explain did not suppress the child on a bad glob" "explain-ran.txt"
+
+# A scope cleaned away between builds must rebuild, not lock the gate
+# out. This is the regression that refusing on the read path caused.
+rm -rf dist
+$MG run dist --hash files --include "dist/**" -- sh -c 'mkdir -p dist && echo built > dist/x' >/dev/null 2>&1
+assert_eq "dead glob: second run cycle rebuilds exit=0" "0" "$?"
+assert_file "dead glob: the cleaned scope was rebuilt" "dist/x"
+
+# The missing-/** typo: the pattern matches the directory but no file.
+$MG set dirgate --hash files --include "src" >/dev/null 2>&1
+assert_eq "dead glob: include naming a directory exit=2" "2" "$?"
+$MG set filegate --hash files --include "src/**" >/dev/null 2>&1
+assert_eq "dead glob: the same pattern with /** is live exit=0" "0" "$?"
+
+# The candidate universe differs per mode: files hashes gitignored paths,
+# a diff delta can never contain them.
+echo "ignored/" > .gitignore
+mkdir -p ignored && echo bin > ignored/out.bin
+git add .gitignore && git commit -qm "ignore" >/dev/null
+$MG set fign --hash files --include "ignored/**" >/dev/null 2>&1
+assert_eq "dead glob: files may scope gitignored paths exit=0" "0" "$?"
+out=$($MG set dign --hash diff --base main --include "ignored/**" 2>&1)
+assert_eq "dead glob: diff refuses a gitignore-only include exit=2" "2" "$?"
+assert_contains "dead glob: diff refusal names the pattern" "dead scope" "$out"
+# The mirror, on an EMPTY scope so the check is actually reached: if
+# files asked git's candidate set instead of the disk, this would refuse.
+$MG set fexc --hash files --include "ignored/**" --exclude "ignored/**" >/dev/null 2>&1
+assert_eq "dead glob: files asks the working tree, not git exit=0" "0" "$?"
+
+# A rename is the realistic way a live scope dies under an existing marker.
+# Only scan is narrowed, so healthy proves the listing still renders rows
+# that are fine — the whole point of degrading rather than aborting.
+cat > .markgate.yml <<'EOF'
+gates:
+  scan:
+    hash: files
+    include:
+      - "src/**"
+  healthy:
+    hash: files
+    include:
+      - "docs/**"
+EOF
+$MG set scan >/dev/null 2>&1
+$MG set healthy >/dev/null 2>&1
+git mv src source >/dev/null 2>&1
+out=$($MG verify scan 2>&1)
+assert_eq "dead glob: verify after a rename is a mismatch exit=1" "1" "$?"
+assert_contains "dead glob: rename mismatch names the pattern" "src/**" "$out"
+out=$($MG set scan 2>&1)
+assert_eq "dead glob: set after a rename exit=2" "2" "$?"
+assert_contains "dead glob: set refusal names the pattern" "src/**" "$out"
+
+# Bare status degrades the one bad row and keeps listing the rest.
+out=$($MG status 2>&1)
+assert_contains "dead glob: bare status reports the dead row" "dead scope" "$out"
+assert_contains "dead glob: bare status still lists the healthy gate" "healthy" "$out"
+# Column padding varies with the widest key in the sandbox, so assert the
+# healthy gate's verdict through its own status rather than by scraping
+# the table.
+$MG status healthy >/dev/null 2>&1
+assert_eq "dead glob: the healthy gate is unaffected exit=0" "0" "$?"
+out=$($MG status scan 2>&1)
+assert_eq "dead glob: single-key status is a mismatch exit=1" "1" "$?"
+assert_contains "dead glob: single-key status explains why" "dead scope" "$out"
 
 # ─────────────────────────────────────────────────────────────────
 echo

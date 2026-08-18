@@ -72,6 +72,9 @@ func newConfigLintCmd() *cobra.Command {
 		Short: "Report typos and config errors in .markgate.yml",
 		Long: "Walks .markgate.yml and warns on:\n" +
 			"  - include/exclude globs that match zero files in the working tree\n" +
+			"    (an include list where EVERY pattern is dead is warned about\n" +
+			"    here AND refused by `set`, since its digest could never go\n" +
+			"    stale; `verify` reports it as a mismatch)\n" +
 			"  - unknown top-level or per-gate keys (typos, leftovers)\n" +
 			"  - unknown hash type, malformed ttl, composes+requires both set\n" +
 			"  - composes/requires entries that name an undeclared gate\n" +
