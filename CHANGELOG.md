@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.4.1](https://github.com/go-to-k/markgate/compare/v0.4.0...v0.4.1) - 2026-08-18
+
+- chore: pin golangci-lint so `make lint` cannot silently do nothing by @go-to-k in https://github.com/go-to-k/markgate/pull/76
+- chore: make the main-branch guard match compound commands by @go-to-k in https://github.com/go-to-k/markgate/pull/80
+- fix(cli): let clear work without a valid config by @go-to-k in https://github.com/go-to-k/markgate/pull/79
+
 ## [v0.4.0](https://github.com/go-to-k/markgate/compare/v0.3.3...v0.4.0) - 2026-08-18
 
 - docs: add use case for composes / requires gate dependencies by @go-to-k in https://github.com/go-to-k/markgate/pull/49
