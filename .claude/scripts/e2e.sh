@@ -700,6 +700,42 @@ out=$($MG config lint 2>&1)
 assert_eq "diff: base on a files gate lints dirty exit=1" "1" "$?"
 assert_contains "diff: lint explains base misuse" "base is only valid with hash=diff" "$out"
 
+# The mirror case: a deps-only gate discards hash/base instead, so it is
+# the same config error seen from the other side (#71). The unresolvable
+# base is deliberate — nothing may resolve it, which is the point.
+cat > .markgate.yml <<'EOF'
+gates:
+  child:
+    hash: files
+    include:
+      - "src/**"
+  parent:
+    hash: diff
+    base: origin/never-resolves
+    composes: [child]
+EOF
+out=$($MG set parent 2>&1)
+assert_eq "diff: deps-only gate rejects hash=diff exit=2" "2" "$?"
+assert_contains "diff: deps-only rejection names the scope" "requires its own scope" "$out"
+
+# Adding include gives the same gate its own scope back, so the rule is
+# about scope rather than about having children at all.
+cat > .markgate.yml <<'EOF'
+gates:
+  child:
+    hash: files
+    include:
+      - "src/**"
+  parent:
+    hash: diff
+    base: main
+    include:
+      - "src/**"
+    composes: [child]
+EOF
+$MG config lint >/dev/null 2>&1
+assert_eq "diff: scoped gate with composes lints clean exit=0" "0" "$?"
+
 # ─────────────────────────────────────────────────────────────────
 echo
 cyan "=== summary ==="

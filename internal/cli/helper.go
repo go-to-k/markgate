@@ -423,6 +423,11 @@ func validateGate(g config.Gate) error {
 		}
 		return nil
 	case config.HashDiff:
+		// Mirrors config.validateGate: a deps-only gate never consults a
+		// hasher, so hash and base would be silently discarded.
+		if !g.HasOwnScope() {
+			return fmt.Errorf("hash=diff requires its own scope; add --include, or drop --hash/--base (composes/requires without include makes the gate deps-only)")
+		}
 		if g.Base == "" {
 			return fmt.Errorf("hash=diff requires --base or a base: in config")
 		}

@@ -83,6 +83,51 @@ func TestLoad_BaseRejectedOnNonDiffGate(t *testing.T) {
 	}
 }
 
+// A deps-only gate never consults a hasher, so hash: diff and base:
+// on one are discarded — the same silent no-op that
+// TestLoad_BaseRejectedOnNonDiffGate exists to prevent, seen from the
+// other side.
+func TestLoad_DiffRejectedOnDepsOnlyGate(t *testing.T) {
+	for _, body := range []string{
+		"gates:\n  child:\n    hash: files\n    include:\n      - \"src/**\"\n  x:\n    hash: diff\n    base: main\n    composes: [child]\n",
+		"gates:\n  child:\n    hash: files\n    include:\n      - \"src/**\"\n  x:\n    hash: diff\n    base: main\n    requires: [child]\n",
+	} {
+		dir := t.TempDir()
+		writeConfig(t, dir, body)
+		if _, err := Load(dir); err == nil {
+			t.Errorf("want error for hash=diff on a deps-only gate: %q", body)
+		}
+	}
+}
+
+// The rule is about own scope, not about having children: a diff gate
+// that declares include alongside composes keeps its own digest and
+// must stay legal.
+func TestLoad_DiffWithIncludeAndDepsOK(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir,
+		"gates:\n  child:\n    hash: files\n    include:\n      - \"src/**\"\n  x:\n    hash: diff\n    base: main\n    include:\n      - \"src/**\"\n    composes: [child]\n")
+	c, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := c.Gate("x"); !g.HasOwnScope() {
+		t.Error("diff gate with include + composes should keep its own scope")
+	}
+}
+
+// git-tree is the default and needs no scope config, so writing it
+// explicitly on a deps-only gate stays legal — the rule targets config
+// that would be discarded, not config that is merely redundant.
+func TestLoad_ExplicitGitTreeOnDepsOnlyGateOK(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir,
+		"gates:\n  child:\n    hash: files\n    include:\n      - \"src/**\"\n  x:\n    hash: git-tree\n    composes: [child]\n")
+	if _, err := Load(dir); err != nil {
+		t.Errorf("explicit git-tree on a deps-only gate should load: %v", err)
+	}
+}
+
 func TestLoad_UnknownHash(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, "gates:\n  x:\n    hash: bogus\n")

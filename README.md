@@ -521,7 +521,7 @@ Per-gate fields:
 | field | purpose |
 | --- | --- |
 | `hash` | `git-tree` (default), `files`, or `diff` |
-| `include` | glob list; required for `hash: files`, optional for `hash: diff` (omitted = the branch's whole delta) |
+| `include` | glob list; required for `hash: files`, optional for `hash: diff` (omitted = the branch's whole delta) except on a gate with `composes`/`requires`, where omitting it would make the gate [deps-only](#gate-dependencies-composes-vs-requires) and discard the hash |
 | `exclude` | glob list |
 | `base` | ref a `hash: diff` gate measures its delta from (e.g. `origin/main`); required there, rejected everywhere else — see [Hashing strategies](#hashing-strategies-git-tree-vs-files-vs-diff) |
 | `state_dir` | optional override of marker storage location — see [Sharing markers](#sharing-markers-across-machines-ci--teammates) |
@@ -766,6 +766,14 @@ almost always stale.
 A `markgate set <parent>` on a deps-only gate still records a
 marker, so `markgate clear <parent>` keeps working as the user
 expects.
+
+Because a deps-only gate never consults a hasher, `hash: diff` on
+one is a config error: its `base:` would be silently discarded, and
+a gate whose ref never has to resolve is exactly the kind of
+misconfiguration that reads as working. Add `include:` if you want
+the gate to have its own delta as well as children, or drop `hash:`
+and `base:`. `hash: git-tree` stays legal there — it is the default
+and carries no scope configuration to discard.
 
 #### Which one should I use?
 

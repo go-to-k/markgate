@@ -168,6 +168,15 @@ func validateGate(c *Config, name string, g Gate) []Finding {
 			})
 		}
 	case HashDiff:
+		// Checked before base: a gate that cannot be a diff gate at all
+		// should say so, rather than send the user to add a base ref
+		// that would still be discarded.
+		if !g.HasOwnScope() {
+			out = append(out, Finding{
+				Path:    fmt.Sprintf("gates.%s", name),
+				Message: fmt.Sprintf("gates.%s: hash=diff requires its own scope; add include, or drop hash and base (composes/requires without include makes the gate deps-only)", name),
+			})
+		}
 		if g.Base == "" {
 			out = append(out, Finding{
 				Path:    fmt.Sprintf("gates.%s", name),
