@@ -20,10 +20,19 @@ set -u
 input=$(cat)
 command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 
-case "$command" in
-  "git commit"*|"git push"*|"git merge"*|"git rebase"*) ;;
-  *) exit 0 ;;
-esac
+# Matched anywhere in the command, not only at the start: these arrive
+# inside a compound far more often than alone
+# (`git add -A && git commit ...`), and a prefix-only match let exactly
+# that through once. The global-option run covers `git -C <dir> commit`
+# and `git -c k=v commit`, which is how the mistake reaches a repo the
+# shell is not sitting in -- the situation that caused it. Requiring a
+# word boundary after the verb keeps read-only lookalikes out
+# (`git merge-tree`), and anchoring the left side keeps `mygit commit`
+# and `git log --grep commit` out.
+git_write_verb='(^|[^[:alnum:]_./-])git(( +-[cC] +[^ ]+)|( +--[a-z][a-z-]*(=[^ ]+)?)|( +-[a-zA-Z]))* +(commit|push|merge|rebase)([[:space:]]|$)'
+if ! printf '%s' "$command" | grep -Eq "$git_write_verb"; then
+  exit 0
+fi
 
 cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
 
