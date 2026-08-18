@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.4.3](https://github.com/go-to-k/markgate/compare/v0.4.2...v0.4.3) - 2026-08-18
+
+- chore: stop the main-branch guard blocking file writes by @go-to-k in https://github.com/go-to-k/markgate/pull/82
+- chore: record what this session kept paying for — audit lessons, and that merging is not shipping by @go-to-k in https://github.com/go-to-k/markgate/pull/84
+
 ## [v0.4.1](https://github.com/go-to-k/markgate/compare/v0.4.0...v0.4.1) - 2026-08-18
 
 - chore: pin golangci-lint so `make lint` cannot silently do nothing by @go-to-k in https://github.com/go-to-k/markgate/pull/76
