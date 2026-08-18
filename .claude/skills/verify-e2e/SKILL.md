@@ -1,6 +1,6 @@
 ---
 name: verify-e2e
-description: Run the markgate end-to-end CLI verification script (`.claude/scripts/e2e.sh`). It exercises the full CLI surface — original primitives (set / verify / clear / run / init / version, default key, --hash files + --include, --state-dir, env-var, precedence) plus every feature added in the 2026-05-09 batch (completion, config lint, TTL, --explain, bare status, composes / requires), the hash: diff strategy, and the dead-include-glob refusal shared by both scoped modes. Wraps the script in `markgate run` so unchanged repos skip the run. Use whenever you want to confirm "all features still work" before declaring done, opening a PR, or merging — or when your changes touch the CLI surface and you want a quick smoke before pushing.
+description: Run the markgate end-to-end CLI verification script (`.claude/scripts/e2e.sh`). It exercises the full CLI surface — original primitives (set / verify / clear / run / init / version, default key, --hash files + --include, --state-dir, env-var, precedence) plus every feature added in the 2026-05-09 batch (completion, config lint, TTL, --explain, bare status, composes / requires), the hash: diff strategy, the dead-include-glob refusal shared by both scoped modes, and clear surviving an invalid config. Wraps the script in `markgate run` so unchanged repos skip the run. Use whenever you want to confirm "all features still work" before declaring done, opening a PR, or merging — or when your changes touch the CLI surface and you want a quick smoke before pushing.
 ---
 
 # verify-e2e
@@ -101,6 +101,15 @@ Three layers of assertions (the script prints the count on every run; it is deli
 - a rename that kills a live scope -> `verify` exit=1 and `set`
   exit=2; bare `status` degrades that row and keeps rendering the
   others
+
+**`clear` survives an invalid config (#77)**
+
+- a validation error elsewhere in the document no longer blocks
+  removal, and the gate's own `state_dir` is still honored
+- `set` / `verify` / `status` still refuse the same config
+- unparseable YAML: `clear` names the exact path it looked at, warns
+  when nothing was there, and `--state-dir` still resolves exactly
+- flag typos (`--hash bogus`) are still refused on a valid config
 
 ## How it caches
 

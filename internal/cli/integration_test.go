@@ -2835,10 +2835,94 @@ func TestClearReportsTheLocationWhenTheConfigCannotBeParsed(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".git", "markgate", "k.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("clear did not remove the marker (err = %v)", err)
 	}
-	// --state-dir still resolves exactly, so the fallback is only for the
-	// layer the unreadable file would have supplied.
-	if code, _ := runCmd(t, "clear", "k", "--state-dir", "elsewhere"); code != 0 {
-		t.Errorf("clear --state-dir with an unparseable config: code = %d, want 0", code)
+	// The path is named, not just described: on this branch the marker
+	// may live somewhere clear never looked, so "cleared" only stays
+	// honest if the user can see where it did look.
+	if !strings.Contains(stderr, filepath.Join(".git", "markgate", "k.json")) {
+		t.Errorf("clear did not name the path it used: %q", stderr)
+	}
+
+	// Nothing at the fallback path is the dangerous shape: "cleared"
+	// would otherwise imply the marker is gone when a gate whose
+	// state_dir could not be read may still have one.
+	_, _, stderr = runCmdStderr(t, "clear", "neverset")
+	if !strings.Contains(stderr, "still exists") {
+		t.Errorf("clear did not warn that a marker may survive elsewhere: %q", stderr)
+	}
+}
+
+// --state-dir and the env var still resolve exactly when the config is
+// unreadable — only the layer the file would have supplied falls back.
+// Seeded BEFORE the config breaks, or the marker never exists and the
+// assertion passes no matter what clear does.
+func TestClearHonorsOverridesWhenTheConfigCannotBeParsed(t *testing.T) {
+	for _, tc := range []struct{ name, dirName string }{
+		{"flag", "flagdir"},
+		{"env", "envdir"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := initRepo(t)
+			writeRepoFile(t, dir, "src/a.go", "a")
+			gitIn(t, dir, "add", ".")
+			gitIn(t, dir, "commit", "-qm", "seed")
+			writeRepoFile(t, dir, ".markgate.yml",
+				"gates:\n  k:\n    hash: files\n    include:\n      - \"src/**\"\n")
+
+			var args []string
+			if tc.name == "flag" {
+				args = []string{"--state-dir", tc.dirName}
+			} else {
+				t.Setenv(EnvStateDir, tc.dirName)
+			}
+
+			if code, _ := runCmd(t, append([]string{"set", "k"}, args...)...); code != 0 {
+				t.Fatal("seed set failed")
+			}
+			marker := filepath.Join(dir, tc.dirName, "k.json")
+			if _, err := os.Stat(marker); err != nil {
+				t.Fatalf("fixture broken, nothing to clear: %v", err)
+			}
+
+			writeRepoFile(t, dir, ".markgate.yml", "gates:\n  k: {hash: files\n")
+			if code, _ := runCmd(t, append([]string{"clear", "k"}, args...)...); code != 0 {
+				t.Fatalf("clear: code = %d, want 0", code)
+			}
+			if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the override did not resolve exactly: %s survived (err = %v)", marker, err)
+			}
+		})
+	}
+}
+
+// Leniency is about the config, not the command line. A flag that
+// cannot mean anything is still a typo worth reporting, so `clear`
+// stays as strict as every other command whenever the document itself
+// is fine — and stops checking only once the document is not.
+func TestClearStillRejectsFlagTyposOnAValidConfig(t *testing.T) {
+	dir := initRepo(t)
+	writeRepoFile(t, dir, "src/a.go", "a")
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  g:\n    hash: files\n    include:\n      - \"src/**\"\n")
+	gitIn(t, dir, "add", ".")
+	gitIn(t, dir, "commit", "-qm", "seed")
+
+	for _, args := range [][]string{
+		{"clear", "g", "--hash", "bogus"},
+		{"clear", "g", "--hash", "diff"},
+		{"clear", "g", "--base", "origin/main"},
+	} {
+		if code, _ := runCmd(t, args...); code != 2 {
+			t.Errorf("%v on a valid config: code = %d, want 2", args, code)
+		}
+	}
+
+	// Once the document is invalid, the same flags stop being checked —
+	// otherwise the recovery path would be blocked by the very thing it
+	// is there to recover from.
+	writeRepoFile(t, dir, ".markgate.yml",
+		"gates:\n  g:\n    hash: files\n    include:\n      - \"src/**\"\n  broken:\n    hash: bogus\n")
+	if code, _ := runCmd(t, "clear", "g", "--hash", "bogus"); code != 0 {
+		t.Errorf("clear on an invalid config: code = %d, want 0", code)
 	}
 }
 

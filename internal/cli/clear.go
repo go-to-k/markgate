@@ -16,8 +16,13 @@ func newClearCmd() *cobra.Command {
 			"removing a marker that is not there succeeds.\n\n" +
 			"clear does not require .markgate.yml to be valid. It only needs to\n" +
 			"know where the marker lives, so a config error elsewhere must not\n" +
-			"stop you cleaning up — every other command still refuses a bad\n" +
-			"config. Errors are reported on stderr so clearing never hides them.",
+			"stop you cleaning up — every other gate command still refuses a\n" +
+			"bad config. Errors are reported on stderr so clearing never hides\n" +
+			"them, and flag typos are still refused: the leniency is about the\n" +
+			"config, not the command line.\n\n" +
+			"If the YAML cannot be parsed at all, state_dir: is unknowable, so\n" +
+			"clear prints the exact path it looked at and warns when nothing\n" +
+			"was there.",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: gateKeyCompletion,
 	}
