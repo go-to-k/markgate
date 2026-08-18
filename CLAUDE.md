@@ -206,6 +206,21 @@ message to a temp file first sidesteps all shell escaping.
   prefix-only match let exactly that through once. Global options are
   matched too (`git -C <dir> commit`), since operating on the repo
   from another cwd is how the mistake happens in the first place.
+  Heredoc bodies are excised first, so writing a script that merely
+  *contains* a git command is not mistaken for running one —
+  `scripts/e2e.sh` has eight of them. Quoted strings deliberately are
+  not excised: `bash -c "git commit"` is a real commit, so a heredoc
+  body (which the shell can never execute) and a quoted string (which
+  it can) are not the same case.
+- `hooks/guard-main-branch.test.sh` is the matrix for the above. Run
+  it after touching that hook: `bash
+  .claude/hooks/guard-main-branch.test.sh` (exit code = failures).
+  It asserts **both** directions, because the hook has failed in both
+  — once missing a real commit, once blocking a file write — and each
+  failure is silent in its own way: a miss puts a commit on `main`, a
+  false positive teaches the reader to route around the guard. Adding
+  a case to only the direction that last broke is how the other one
+  comes back.
 - `hooks/e2e-pre-merge.sh` is a PreToolUse hook on Bash: before any
   `gh pr merge ...` it runs `.claude/scripts/e2e.sh` (the full
   black-box CLI smoke), wrapped in `markgate run` so unchanged
