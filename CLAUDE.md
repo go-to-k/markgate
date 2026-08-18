@@ -189,7 +189,12 @@ message to a temp file first sidesteps all shell escaping.
   mistake, which the project's branch-protection rule catches at
   push time but only after the commit has already landed locally
   (expensive to unwind). Exits 2 with a message pointing at the fix
-  (`git checkout -b <feature-branch>`).
+  (`git checkout -b <feature-branch>`). Matches the verb anywhere in
+  the command, not just at the start: these almost always arrive
+  inside a compound (`git add -A && git commit ...`), and a
+  prefix-only match let exactly that through once. Global options are
+  matched too (`git -C <dir> commit`), since operating on the repo
+  from another cwd is how the mistake happens in the first place.
 - `hooks/e2e-pre-merge.sh` is a PreToolUse hook on Bash: before any
   `gh pr merge ...` it runs `.claude/scripts/e2e.sh` (the full
   black-box CLI smoke), wrapped in `markgate run` so unchanged
