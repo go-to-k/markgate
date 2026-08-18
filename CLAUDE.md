@@ -118,6 +118,35 @@ detection, ineffassign, unused-variable, format-string checks, and
 more that `go vet` alone misses. If only `go vet` passed, CI is your
 audit — which is too late.
 
+## Releasing (merging to main is not shipping)
+
+`tagpr` keeps a release PR open against `main` ("Release for vX.Y.Z"),
+accumulating every merge into a CHANGELOG entry. **Merging that PR is
+what ships**: it tags the merge commit, and `.github/actions/release`
+then builds the cross-platform archives, attaches them plus
+`checksums.txt`, takes the GitHub release out of draft, and updates
+the Homebrew tap.
+
+Until that happens the work does not exist for anyone consuming
+markgate — a downstream repo pinned to a released version sees
+nothing. So **a task that exists because a consumer needs a behavior
+is not done at merge; it is done at release.** Treat the release PR
+as part of the task, not as unrelated repo upkeep. (That framing
+error is exactly how a release got classified out-of-session once:
+by its mechanism — "it's a tagpr PR" — rather than by the goal.)
+
+Version: patch by default. The `Lint PR` workflow adds
+`minor-release` for a `feat:` title, and `.tagpr` reads
+`minorLabels` / `majorLabels`, so a new feature bumps the minor
+automatically. Nothing to do by hand unless you want to override.
+
+After merging the release PR, confirm it actually shipped rather than
+assuming: the workflow can succeed while the release is still a draft
+with no assets. Check `isDraft: false` and a non-empty asset list,
+then download the built archive and smoke it — that is the only test
+of the artifact users receive, and it is a different artifact from
+the one `go test` and `e2e.sh` exercise.
+
 ## Style
 
 - **No comments that describe *what* the code does.** Identifier names
