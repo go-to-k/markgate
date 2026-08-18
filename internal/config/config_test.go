@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -97,6 +98,23 @@ func TestLoad_DiffRejectedOnDepsOnlyGate(t *testing.T) {
 		if _, err := Load(dir); err == nil {
 			t.Errorf("want error for hash=diff on a deps-only gate: %q", body)
 		}
+	}
+}
+
+// The scope check must come BEFORE the base requirement. A gate that
+// cannot be a diff gate at all should say so, rather than send the user
+// to add a base ref that the same gate would still discard. Ordering is
+// invisible to a gate that supplies a base, so this case omits it.
+func TestLoad_DepsOnlyDiffReportsScopeBeforeBase(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir,
+		"gates:\n  child:\n    hash: files\n    include:\n      - \"src/**\"\n  x:\n    hash: diff\n    composes: [child]\n")
+	_, err := Load(dir)
+	if err == nil {
+		t.Fatal("want an error for a deps-only diff gate with no base")
+	}
+	if !strings.Contains(err.Error(), "requires its own scope") {
+		t.Errorf("Load reported %q; want the scope problem first, not the base ref", err)
 	}
 }
 
