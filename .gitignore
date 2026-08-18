@@ -21,3 +21,8 @@ dist/
 cover.out.tmp
 cover.html
 /markgate
+
+# Throwaway git worktrees created for isolated subagent runs.
+# They are real repositories, so a stray `git add -A` commits them as
+# gitlinks; that has happened.
+.claude/worktrees/
