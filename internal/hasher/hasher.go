@@ -1,12 +1,15 @@
 // Package hasher computes the state digest that markgate stores in a
 // marker and compares at verify time.
 //
-// Two strategies are provided:
+// Three strategies are provided:
 //
 //   - GitTree: hashes HEAD + (diff ∪ untracked), including deletions.
 //     Safe default; invalidates automatically when HEAD moves.
 //   - Files:   hashes files matching include globs minus exclude globs.
 //     Useful when you want narrower invalidation (e.g. docs only).
+//   - Diff:    hashes the working-tree delta against merge-base(base,
+//     HEAD). Changes arriving from the base branch under files this
+//     branch has not touched leave the digest alone.
 //
 // The digest format (framing, sort order, etc.) is an implementation
 // detail; markers written by one version are not guaranteed to validate
@@ -45,6 +48,8 @@ func For(g config.Gate) (Hasher, error) {
 		return GitTree{Include: g.Include, Exclude: g.Exclude}, nil
 	case config.HashFiles:
 		return Files{Include: g.Include, Exclude: g.Exclude}, nil
+	case config.HashDiff:
+		return Diff{Include: g.Include, Exclude: g.Exclude, Base: g.Base}, nil
 	default:
 		return nil, fmt.Errorf("unknown hash type %q", g.Hash)
 	}

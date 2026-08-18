@@ -27,6 +27,15 @@ func New(dir string) *Repo {
 // inside a repository. Callers translate this to exit code 2.
 var ErrNotARepo = errors.New("not a git repository")
 
+// ErrRefNotFound is returned by ResolveCommit / MergeBase when the ref
+// does not resolve to a commit (typo, or never fetched).
+var ErrRefNotFound = errors.New("ref does not resolve to a commit")
+
+// ErrNoMergeBase is returned by MergeBase when the two commits share no
+// ancestor (unrelated histories, or a shallow clone that does not reach
+// far enough back).
+var ErrNoMergeBase = errors.New("no merge base")
+
 func (r *Repo) run(args ...string) ([]byte, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.Dir
@@ -82,6 +91,80 @@ func (r *Repo) DiffHeadNames() ([]string, error) {
 		return nil, err
 	}
 	return splitNUL(out), nil
+}
+
+// ResolveCommit returns the full SHA that ref points at, or
+// ErrRefNotFound when it does not name a commit.
+func (r *Repo) ResolveCommit(ref string) (string, error) {
+	out, err := r.run("rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("%q: %w", ref, ErrRefNotFound)
+	}
+	sha := strings.TrimSpace(string(out))
+	if sha == "" {
+		return "", fmt.Errorf("%q: %w", ref, ErrRefNotFound)
+	}
+	return sha, nil
+}
+
+// MergeBase returns the best common ancestor of ref and HEAD. The ref is
+// resolved first so an unfetched / mistyped ref reports ErrRefNotFound
+// rather than the generic "no merge base".
+func (r *Repo) MergeBase(ref string) (string, error) {
+	if _, err := r.ResolveCommit(ref); err != nil {
+		return "", err
+	}
+	// git merge-base exits 1 with empty output when no ancestor exists,
+	// which run() surfaces as a bare "exit status 1"; both shapes mean
+	// the same thing to callers.
+	out, err := r.run("merge-base", ref, "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("%q and HEAD: %w", ref, ErrNoMergeBase)
+	}
+	sha := strings.TrimSpace(string(out))
+	if sha == "" {
+		return "", fmt.Errorf("%q and HEAD: %w", ref, ErrNoMergeBase)
+	}
+	return sha, nil
+}
+
+// DiffEntry is one path whose working-tree content differs from a base
+// commit. BaseBlob is the blob SHA the base side holds, or "" when the
+// path does not exist there (added on this side).
+type DiffEntry struct {
+	Path     string
+	BaseBlob string
+}
+
+// zeroBlob is git's "unknown / absent" blob SHA in raw diff output. It
+// appears on the destination side of every working-tree comparison, and
+// on the source side of an addition.
+const zeroBlob = "0000000000000000000000000000000000000000"
+
+// DiffFrom returns the working-tree differences against commit rev
+// (index state is irrelevant, matching the git-tree hasher's staging
+// invariant). Rename detection is off and SHAs are unabbreviated so the
+// result never depends on the caller's git config.
+func (r *Repo) DiffFrom(rev string) ([]DiffEntry, error) {
+	out, err := r.run("diff", "--raw", "--no-abbrev", "--no-renames", "-z", rev)
+	if err != nil {
+		return nil, err
+	}
+	fields := splitNUL(out)
+	entries := make([]DiffEntry, 0, len(fields)/2)
+	for i := 0; i+1 < len(fields); i += 2 {
+		// meta is ":<srcmode> <dstmode> <srcsha> <dstsha> <status>".
+		meta := strings.Fields(fields[i])
+		if len(meta) < 5 {
+			return nil, fmt.Errorf("git diff --raw: unexpected record %q", fields[i])
+		}
+		base := meta[2]
+		if base == zeroBlob {
+			base = ""
+		}
+		entries = append(entries, DiffEntry{Path: fields[i+1], BaseBlob: base})
+	}
+	return entries, nil
 }
 
 // UntrackedNames returns paths (repo-relative) that are untracked but not

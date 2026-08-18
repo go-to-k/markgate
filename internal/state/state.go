@@ -48,12 +48,20 @@ const (
 )
 
 // Marker is the serialized form of a recorded state hash.
+//
+// Head, Base and MergeBase are diagnostics for `markgate status`, never
+// inputs to the freshness comparison: Head is written by the git-tree
+// hasher (whose digest already covers it), Base / MergeBase by the diff
+// hasher (whose digest deliberately excludes them, so a base branch that
+// moves under untouched files leaves the marker fresh).
 type Marker struct {
 	Version   int       `json:"version"`
 	Kind      string    `json:"kind,omitempty"`
 	HashType  string    `json:"hash_type,omitempty"`
 	Digest    string    `json:"digest,omitempty"`
 	Head      string    `json:"head,omitempty"`
+	Base      string    `json:"base,omitempty"`
+	MergeBase string    `json:"merge_base,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 

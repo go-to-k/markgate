@@ -60,6 +60,8 @@ type statusMarkerJSON struct {
 	Kind      string `json:"kind,omitempty"`
 	HashType  string `json:"hash_type,omitempty"`
 	Head      string `json:"head,omitempty"`
+	Base      string `json:"base,omitempty"`
+	MergeBase string `json:"merge_base,omitempty"`
 }
 
 type statusRowJSON struct {
@@ -95,6 +97,8 @@ func (r statusRow) toJSON() statusRowJSON {
 			Kind:      r.marker.Kind,
 			HashType:  r.marker.HashType,
 			Head:      r.marker.Head,
+			Base:      r.marker.Base,
+			MergeBase: r.marker.MergeBase,
 		}
 	}
 	return row
@@ -205,6 +209,12 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 	fmt.Fprintf(out, "created:    %s\n", m.CreatedAt.Format(time.RFC3339))
 	if m.Head != "" {
 		fmt.Fprintf(out, "head:       %s\n", m.Head)
+	}
+	if m.Base != "" {
+		fmt.Fprintf(out, "base:       %s\n", m.Base)
+	}
+	if m.MergeBase != "" {
+		fmt.Fprintf(out, "merge base: %s\n", m.MergeBase)
 	}
 	if c.gate.TTL != "" {
 		fmt.Fprintf(out, "ttl:        %s\n", c.gate.TTL)
@@ -363,6 +373,18 @@ func buildRow(c *gateCtx, configured bool, clock time.Time) (statusRow, error) {
 	}
 	res, err := c.evaluate()
 	if err != nil {
+		// A diff gate whose base is unusable (unfetched ref, or HEAD
+		// sitting at the merge base) is an error everywhere else, but
+		// the bare listing is the "show me every gate" view: report the
+		// offending row and keep rendering the others.
+		if errors.Is(err, hasher.ErrDiffBase) {
+			row.state = stateMismatch
+			// Only the "what", not the "how to fix": the remedy clause
+			// after the semicolon would blow the table's width open, and
+			// `markgate status <key>` prints the whole message anyway.
+			row.note = strings.SplitN(err.Error(), ";", 2)[0]
+			return row, nil
+		}
 		return row, err
 	}
 	if res.marker == nil {
