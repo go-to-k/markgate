@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -398,7 +399,7 @@ func TestDiff_ScopeMatchesFilesHasher(t *testing.T) {
 		if len(want) == 0 {
 			t.Fatalf("include %v matched nothing under hash=files; the case proves nothing", tc.include)
 		}
-		if !equalStrings(want, got) {
+		if !slices.Equal(want, got) {
 			t.Errorf("include=%v exclude=%v: files scope %v, diff scope %v", tc.include, tc.exclude, want, got)
 		}
 	}
@@ -418,7 +419,7 @@ func TestDiff_EmptyIncludeCoversTheWholeDelta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !equalStrings(scope, []string{"docs/x.md", "src/a.go"}) {
+	if !slices.Equal(scope, []string{"docs/x.md", "src/a.go"}) {
 		t.Errorf("unscoped diff scope = %v, want the whole delta", scope)
 	}
 
@@ -428,7 +429,7 @@ func TestDiff_EmptyIncludeCoversTheWholeDelta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !equalStrings(scope, []string{"src/a.go"}) {
+	if !slices.Equal(scope, []string{"src/a.go"}) {
 		t.Errorf("exclude-only diff scope = %v, want the delta minus docs", scope)
 	}
 }
@@ -446,7 +447,7 @@ func TestDiff_DeletedPathStaysInScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !equalStrings(diffScope, []string{"src/b.go"}) {
+	if !slices.Equal(diffScope, []string{"src/b.go"}) {
 		t.Errorf("diff scope = %v, want the deleted path", diffScope)
 	}
 
@@ -459,16 +460,4 @@ func TestDiff_DeletedPathStaysInScope(t *testing.T) {
 			t.Error("files scope unexpectedly contains the deleted path")
 		}
 	}
-}
-
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

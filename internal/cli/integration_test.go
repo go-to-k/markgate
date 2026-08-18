@@ -2212,15 +2212,12 @@ func TestDiffHash_ExplainListsDelta(t *testing.T) {
 // setGitConfigEnv injects git configuration for the duration of t via
 // GIT_CONFIG_COUNT, which outranks the repo's own config file and is
 // how a hostile-but-legal user setting is simulated.
-func setGitConfigEnv(t *testing.T, kv ...string) {
+func setGitConfigEnv(t *testing.T, settings ...[2]string) {
 	t.Helper()
-	if len(kv)%2 != 0 {
-		t.Fatalf("setGitConfigEnv: odd number of arguments: %v", kv)
-	}
-	t.Setenv("GIT_CONFIG_COUNT", strconv.Itoa(len(kv)/2))
-	for i := 0; i < len(kv); i += 2 {
-		t.Setenv(fmt.Sprintf("GIT_CONFIG_KEY_%d", i/2), kv[i])
-		t.Setenv(fmt.Sprintf("GIT_CONFIG_VALUE_%d", i/2), kv[i+1])
+	t.Setenv("GIT_CONFIG_COUNT", strconv.Itoa(len(settings)))
+	for i, kv := range settings {
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_KEY_%d", i), kv[0])
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_VALUE_%d", i), kv[1])
 	}
 }
 
@@ -2257,7 +2254,7 @@ func TestDiffHash_SubdirectoryInvocationKeepsRepoScope(t *testing.T) {
 	writeRepoFile(t, dir, "docs/x.md", "x2 mine\n")
 	gitIn(t, dir, "commit", "-qam", "my work")
 
-	setGitConfigEnv(t, "diff.relative", "true")
+	setGitConfigEnv(t, [2]string{"diff.relative", "true"})
 
 	if code, _ := runCmd(t, "set", "d"); code != 0 {
 		t.Fatalf("set from repo root: code = %d", code)
