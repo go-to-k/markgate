@@ -168,9 +168,9 @@ func TestFiles_ExcludeEmptyingTheScopeIsNotDead(t *testing.T) {
 }
 
 // Files hashes whatever is on disk, ignored or not, so an include that
-// matches only gitignored paths is a real scope and must stay legal.
-// Diff draws from a git delta instead, which is why the two strategies
-// need different candidate universes.
+// matches only gitignored paths is a real scope. The scope here is
+// non-empty, so this covers the hashing, not the refusal — for that see
+// TestFiles_EmptyScopeAsksTheWorkingTreeNotGit.
 func TestFiles_GitignoredIncludeIsLive(t *testing.T) {
 	repo, dir := newTestRepo(t)
 	writeFile(t, dir, ".gitignore", "build/\n")
@@ -194,10 +194,54 @@ func TestFiles_GitignoredIncludeIsLive(t *testing.T) {
 }
 
 // A gate with no include at all covers the whole tree and cannot be
-// dead, so the check must not fire on it.
+// dead, so the check must not fire on it. Exercised through Hash on an
+// empty tree: Scope never carries the refusal, so asserting there would
+// pass no matter what the check did.
 func TestFiles_NoIncludeIsNotDead(t *testing.T) {
 	repo, _ := newTestRepo(t)
-	if _, err := (Files{}).Scope(repo); err != nil {
+	if _, err := (Files{}).Hash(repo); err != nil {
 		t.Errorf("include-less Files should not report a dead scope: %v", err)
+	}
+}
+
+// An include naming a directory rather than the files under it — the
+// missing-/** typo — matches the path but no regular file, so the scope
+// is empty and the digest constant. The directory filter in the
+// candidate walk is what catches this; without it the gate would pass
+// forever, which is issue #70 verbatim.
+func TestFiles_IncludeMatchingOnlyADirectoryIsDead(t *testing.T) {
+	repo, dir := newTestRepo(t)
+	writeFile(t, dir, "src/a.ts", "a")
+
+	if _, err := (Files{Include: []string{"src"}}).Hash(repo); !errors.Is(err, ErrDeadScope) {
+		t.Errorf("include naming a directory: Hash err = %v, want ErrDeadScope", err)
+	}
+	// The same pattern with the files under it is a real scope.
+	if _, err := (Files{Include: []string{"src/**"}}).Hash(repo); err != nil {
+		t.Errorf("src/** should be live: %v", err)
+	}
+}
+
+// The Files half of the per-strategy universe. Reaching it needs an
+// EMPTY scope whose include is nevertheless live on disk, which is what
+// exclude gives us: if Files asked git's candidate set instead of the
+// working tree, a gitignored include would look dead and be refused.
+func TestFiles_EmptyScopeAsksTheWorkingTreeNotGit(t *testing.T) {
+	repo, dir := newTestRepo(t)
+	writeFile(t, dir, ".gitignore", "build/\n")
+	writeFile(t, dir, "build/out.bin", "bin")
+	runGit(t, dir, "add", ".gitignore")
+	runGit(t, dir, "commit", "-qm", "ignore build")
+
+	h := Files{Include: []string{"build/**"}, Exclude: []string{"build/**"}}
+	scope, err := h.Scope(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scope) != 0 {
+		t.Fatalf("fixture broken: scope = %v, want empty so the check is reached", scope)
+	}
+	if _, err := h.Hash(repo); err != nil {
+		t.Errorf("gitignored include is live for files; Hash err = %v", err)
 	}
 }

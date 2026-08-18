@@ -2686,10 +2686,39 @@ func TestDeadIncludeExplainDoesNotChangeTheOutcome(t *testing.T) {
 		t.Errorf("--explain suppressed the child: %v", err)
 	}
 
-	// The digest is still refused; only the description is tolerant.
-	if code, _ := runCmd(t, "set", "typo", "--hash", "files", "--include", "scr/**",
-		"--explain"); code != 2 {
-		t.Errorf("set --explain on a dead include: code = %d, want 2", code)
+	// A scope that cannot be computed at all is the harder case: without
+	// a marker nothing else touches the glob, so --explain is the only
+	// caller, and failing there would flip the exit code and suppress
+	// the child.
+	plain, _ := runCmd(t, "verify", "bad", "--hash", "files", "--include", "a[b")
+	explained, _, stderr := runCmdStderr(t, "verify", "bad", "--hash", "files",
+		"--include", "a[b", "--explain")
+	if plain != explained {
+		t.Errorf("--explain changed verify on a malformed glob: %d -> %d", plain, explained)
+	}
+	if !strings.Contains(stderr, "unavailable") {
+		t.Errorf("--explain did not report why the scope was missing: %q", stderr)
+	}
+	// Same for run: the malformed glob genuinely stops `set` from
+	// recording, so both forms exit 2 — but the child must run either
+	// way. Asserting equality rather than a fixed code keeps the test
+	// about the flag, not about what a bad glob happens to return.
+	plainStamp := filepath.Join(dir, "plain-ran.txt")
+	plainRun, _ := runCmd(t, "run", "bad", "--hash", "files", "--include", "a[b",
+		"--", "touch", plainStamp)
+	explainStamp := filepath.Join(dir, "explain-ran.txt")
+	explainRun, _ := runCmd(t, "run", "bad", "--hash", "files", "--include", "a[b",
+		"--explain", "--", "touch", explainStamp)
+	if plainRun != explainRun {
+		t.Errorf("--explain changed run on a malformed glob: %d -> %d", plainRun, explainRun)
+	}
+	_, plainErr := os.Stat(plainStamp)
+	_, explainErr := os.Stat(explainStamp)
+	if (plainErr == nil) != (explainErr == nil) {
+		t.Errorf("--explain changed whether the child ran: plain=%v explain=%v", plainErr, explainErr)
+	}
+	if plainErr != nil {
+		t.Fatalf("fixture broken: the child should run without --explain too: %v", plainErr)
 	}
 }
 

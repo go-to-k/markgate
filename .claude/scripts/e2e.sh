@@ -792,8 +792,14 @@ rm -rf dist
 $MG run dist2 --hash files --include "dist/**" --explain -- sh -c 'mkdir -p dist && echo built > dist/x' >/dev/null 2>&1
 assert_eq "dead glob: run --explain still bootstraps exit=0" "0" "$?"
 assert_file "dead glob: --explain did not suppress the child" "dist/x"
-$MG set typo2 --hash files --include "scr/**" --explain >/dev/null 2>&1
-assert_eq "dead glob: set --explain still refuses the digest exit=2" "2" "$?"
+# The harder case: a glob that cannot be resolved at all. Without a
+# marker nothing else touches it, so --explain is the only caller.
+$MG verify badglob --hash files --include "a[b" >/dev/null 2>&1
+plain_code=$?
+$MG verify badglob --hash files --include "a[b" --explain >/dev/null 2>&1
+assert_eq "dead glob: --explain does not change verify on a bad glob" "$plain_code" "$?"
+$MG run badglob --hash files --include "a[b" --explain -- touch explain-ran.txt >/dev/null 2>&1
+assert_file "dead glob: --explain did not suppress the child on a bad glob" "explain-ran.txt"
 
 # A scope cleaned away between builds must rebuild, not lock the gate
 # out. This is the regression that refusing on the read path caused.
@@ -801,6 +807,12 @@ rm -rf dist
 $MG run dist --hash files --include "dist/**" -- sh -c 'mkdir -p dist && echo built > dist/x' >/dev/null 2>&1
 assert_eq "dead glob: second run cycle rebuilds exit=0" "0" "$?"
 assert_file "dead glob: the cleaned scope was rebuilt" "dist/x"
+
+# The missing-/** typo: the pattern matches the directory but no file.
+$MG set dirgate --hash files --include "src" >/dev/null 2>&1
+assert_eq "dead glob: include naming a directory exit=2" "2" "$?"
+$MG set filegate --hash files --include "src/**" >/dev/null 2>&1
+assert_eq "dead glob: the same pattern with /** is live exit=0" "0" "$?"
 
 # The candidate universe differs per mode: files hashes gitignored paths,
 # a diff delta can never contain them.
@@ -811,7 +823,11 @@ $MG set fign --hash files --include "ignored/**" >/dev/null 2>&1
 assert_eq "dead glob: files may scope gitignored paths exit=0" "0" "$?"
 out=$($MG set dign --hash diff --base main --include "ignored/**" 2>&1)
 assert_eq "dead glob: diff refuses a gitignore-only include exit=2" "2" "$?"
-assert_contains "dead glob: diff refusal names the pattern" "ignored/**" "$out"
+assert_contains "dead glob: diff refusal names the pattern" "dead scope" "$out"
+# The mirror, on an EMPTY scope so the check is actually reached: if
+# files asked git's candidate set instead of the disk, this would refuse.
+$MG set fexc --hash files --include "ignored/**" --exclude "ignored/**" >/dev/null 2>&1
+assert_eq "dead glob: files asks the working tree, not git exit=0" "0" "$?"
 
 # A rename is the realistic way a live scope dies under an existing marker.
 # Only scan is narrowed, so healthy proves the listing still renders rows

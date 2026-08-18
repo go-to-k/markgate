@@ -173,12 +173,21 @@ func statusSingle(out, errOut io.Writer, k string, overrides *gateFlagValues, ex
 			unconfigured: false,
 		}
 		switch {
+		case res.deadScope != nil:
+			row.state = stateMismatch
+			row.note = noteWhat(res.deadScope)
 		case res.hashTypeChanged, res.ownDigestDiff:
 			row.state = stateMismatch
 			row.note = noteDigestDiff
-		case !res.matched:
+		case res.ttl.expired:
+			row.state = stateMismatch
+			row.note = fmt.Sprintf("expired %s ago", formatAge(res.ttl.age-res.ttl.ttl))
+		case res.childKey != "":
 			row.state = stateMismatch
 			row.note = "child " + res.childKey + " is stale"
+		case !res.matched:
+			row.state = stateMismatch
+			row.note = res.reason
 		default:
 			row.state = stateMatch
 		}

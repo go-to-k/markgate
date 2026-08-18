@@ -96,9 +96,11 @@ Three layers of assertions (the script prints the count on every run; it is deli
 - when the child runs and the scope is still empty, the marker is
   refused (child ran, no marker written)
 - `--explain` stays diagnostic: it renders the empty scope, so adding
-  the flag neither suppresses `run`'s child nor rescues `set`
-- a rename that kills a live scope -> `verify` exit=2; bare `status`
-  degrades that row and keeps rendering the others
+  the flag never suppresses `run`'s child — including when the scope
+  cannot be computed at all (a malformed glob)
+- a rename that kills a live scope -> `verify` exit=1 and `set`
+  exit=2; bare `status` degrades that row and keeps rendering the
+  others
 
 ## How it caches
 

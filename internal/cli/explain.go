@@ -55,6 +55,10 @@ type explainPayload struct {
 	Scope  []string `json:"scope"`
 	Hasher string   `json:"hasher"`
 	State  string   `json:"state"`
+	// ScopeError is present only when the scope could not be computed.
+	// Additive, so the documented {key, scope, hasher, state} shape is
+	// unchanged for every gate that resolves.
+	ScopeError string `json:"scope_error,omitempty"`
 }
 
 // emitExplain writes the scope listing for c. In text mode the listing
@@ -69,9 +73,15 @@ func emitExplain(c *gateCtx, flags *explainFlags, out, errOut io.Writer, markerS
 	if flags == nil || !flags.enabled {
 		return nil
 	}
+	// A Scope error must not propagate: --explain is a diagnostic, and
+	// the command's own path already errors wherever it should. Failing
+	// here instead flips exit codes and, on `run`, suppresses the child
+	// — so passing the flag would change what the command does, which is
+	// the one thing it must never do.
 	scope, err := c.hasher.Scope(c.repo)
+	scopeErr := ""
 	if err != nil {
-		return err
+		scope, scopeErr = nil, err.Error()
 	}
 	// Empty scope is a real signal (globs match nothing); render an
 	// empty list rather than nil so JSON consumers see []  .
@@ -81,10 +91,11 @@ func emitExplain(c *gateCtx, flags *explainFlags, out, errOut io.Writer, markerS
 
 	if flags.json {
 		payload := explainPayload{
-			Key:    c.key,
-			Scope:  scope,
-			Hasher: c.hasher.Type(),
-			State:  markerState,
+			Key:        c.key,
+			Scope:      scope,
+			Hasher:     c.hasher.Type(),
+			State:      markerState,
+			ScopeError: scopeErr,
 		}
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
@@ -92,6 +103,9 @@ func emitExplain(c *gateCtx, flags *explainFlags, out, errOut io.Writer, markerS
 	}
 
 	fmt.Fprintln(errOut, "scope:")
+	if scopeErr != "" {
+		fmt.Fprintf(errOut, "  (unavailable: %s)\n", scopeErr)
+	}
 	for _, p := range scope {
 		fmt.Fprintf(errOut, "  %s\n", p)
 	}
