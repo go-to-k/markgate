@@ -104,7 +104,7 @@ Before pushing or marking done, run:
 
 ```sh
 go test ./...
-make lint        # golangci-lint run, mirrors CI
+make lint        # pinned golangci-lint via `go run`, mirrors CI
 ```
 
 `make lint` catches — in descending order of this session's hit
