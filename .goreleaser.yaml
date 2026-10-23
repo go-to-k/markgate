@@ -47,10 +47,9 @@ homebrew_casks:
     description: State-cached gate primitive for hook managers
     hooks:
       post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr",
-              args: ["-dr", "com.apple.quarantine", "#{staged_path}/markgate"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/markgate"]
           end
 release:
   use_existing_draft: true
