@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.4.4](https://github.com/go-to-k/markgate/compare/v0.4.3...v0.4.4) - 2026-10-23
+
+- chore: emit the cask quarantine hook as declarative install steps by @go-to-k in https://github.com/go-to-k/markgate/pull/86
+
 ## [v0.4.3](https://github.com/go-to-k/markgate/compare/v0.4.2...v0.4.3) - 2026-10-23
 
 - chore: stop the main-branch guard blocking file writes by @go-to-k in https://github.com/go-to-k/markgate/pull/82
