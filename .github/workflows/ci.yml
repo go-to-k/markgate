@@ -61,4 +61,4 @@ jobs:
           # action otherwise floats, so CI and `make lint` can disagree
           # about which linters even exist — the point of running lint
           # locally is that it predicts this job.
-          golangci_lint_version: "v2.12.2"
+          golangci_lint_version: "v2.15.0"
