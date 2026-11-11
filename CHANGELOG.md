@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.4.5](https://github.com/go-to-k/markgate/compare/v0.4.4...v0.4.5) - 2026-11-11
+
+- ci: hold Dependabot version updates back for 7 days after a release by @go-to-k in https://github.com/go-to-k/markgate/pull/88
+- chore: read the golangci-lint version from a single file by @go-to-k in https://github.com/go-to-k/markgate/pull/90
+- chore: build with Go 1.27.4 for security fixes by @go-to-k in https://github.com/go-to-k/markgate/pull/91
+
 ## [v0.4.4](https://github.com/go-to-k/markgate/compare/v0.4.3...v0.4.4) - 2026-10-23
 
 - chore: emit the cask quarantine hook as declarative install steps by @go-to-k in https://github.com/go-to-k/markgate/pull/86
